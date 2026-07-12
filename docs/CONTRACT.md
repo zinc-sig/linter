@@ -93,8 +93,12 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 
 ## 4. Invocation environment
 
-- Working directory: `/workspace` (core copies the student files there under
-  its configured per-language filenames before invoking the command).
+- Working directory: a core-owned workspace directory prepared per invocation,
+  containing the student file (named per the instructor's question
+  configuration) alongside any sibling assets (headers, provided sources).
+  File paths passed to `cobe-lint` are relative to that directory; linters may
+  resolve sibling files through the working directory. The image's
+  `/workspace` merely guarantees a writable default location.
 - The container runs as the non-root `linter` user; commands must not require
   root.
 - Core enforces its own execution timeout and output-size caps outside the
