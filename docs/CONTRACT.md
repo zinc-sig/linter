@@ -12,15 +12,13 @@ language by forking this repo — core picks it up automatically.
 Core discovers the languages by exec'ing `/usr/local/bin/cobe-lint manifest`
 in the linter container at startup and derives everything from the JSON it
 writes to stdout: the supported-language set (also served via core's public
-"supported languages" endpoint), the target filename per language, and the
-lint command to exec.
+"supported languages" endpoint) and the lint command to exec per language.
 
 ```json
 {
   "version": 1,
   "languages": {
     "python": {
-      "filename": "solution.py",
       "command": ["/usr/local/bin/cobe-lint", "lint", "python"]
     }
   }
@@ -31,14 +29,14 @@ lint command to exec.
   major version it does not know.
 - `languages` (object, required): key = language identifier (lowercase,
   `[a-z0-9_+-]+`), value:
-  - `filename` (string, required): the filename the student's code is written
-    to inside the workspace before linting (e.g. `solution.py`,
-    `Solution.java`).
   - `command` (array of strings, required): argv **prefix** to exec inside
     the linter container. The caller appends one or more workspace-relative
     file paths as trailing arguments — there are no placeholders. No shell is
     involved; the argv is exec'd as-is. All files of one lint run go to a
     single invocation, and findings carry per-file paths.
+
+The workspace filename each language lints under is owned and configured by
+core (deployment config), not by this image.
 
 ## 2. Unified findings output
 
@@ -96,7 +94,7 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 ## 4. Invocation environment
 
 - Working directory: `/workspace` (core copies the student files there under
-  the manifest `filename` before invoking the command).
+  its configured per-language filenames before invoking the command).
 - The container runs as the non-root `linter` user; commands must not require
   root.
 - Core enforces its own execution timeout and output-size caps outside the
@@ -111,7 +109,9 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 
 ## 6. Adding a language
 
-Implement the `linter.Linter` interface (`Language`, `Filename`, `Command`,
-`Parse`) in a new `languages/<lang>/` package and register it in
+Implement the `linter.Linter` interface (`Language`, `Command`, `Parse`) in
+a new `languages/<lang>/` package and register it in
 `languages/languages.go` — the manifest, the CLI, and the conformance tests
-all derive from that registry automatically.
+all derive from that registry automatically. No filename is involved: the
+workspace filename for the new language is configured on core's side as
+deployment config.

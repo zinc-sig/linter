@@ -34,7 +34,6 @@ type fake struct {
 }
 
 func (f fake) Language() string                { return "fake" }
-func (f fake) Filename() string                { return "fake.txt" }
 func (f fake) Command(files []string) []string { return f.argv }
 func (f fake) Parse(stdout, stderr []byte, exitCode int) (Report, error) {
 	return f.parse(stdout, stderr, exitCode)

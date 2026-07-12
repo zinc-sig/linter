@@ -32,9 +32,6 @@ func TestManifest(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest is missing python")
 	}
-	if entry.Filename != "solution.py" {
-		t.Errorf("python filename = %q", entry.Filename)
-	}
 	// The command is a plain argv prefix — no {file}/{files} placeholders;
 	// consumers append file paths as trailing arguments.
 	want := []string{binPath, "lint", "python"}

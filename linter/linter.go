@@ -42,13 +42,12 @@ type Report struct {
 	Findings []Finding `json:"findings"`
 }
 
-// Linter is implemented once per language, in languages/<lang>/.
+// Linter is implemented once per language, in languages/<lang>/. The
+// filename a language is staged under inside the workspace is core's
+// deployment config, not part of this interface.
 type Linter interface {
 	// Language is the manifest key, e.g. "python".
 	Language() string
-	// Filename is the name the student's file is staged under inside the
-	// workspace, e.g. "solution.py".
-	Filename() string
 	// Command returns the native tool argv for linting files. No shell is
 	// involved; the argv is exec'd as-is.
 	Command(files []string) []string

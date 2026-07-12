@@ -39,9 +39,6 @@ func TestMetadata(t *testing.T) {
 	if l.Language() != "c" {
 		t.Errorf("Language = %q", l.Language())
 	}
-	if l.Filename() != "solution.c" {
-		t.Errorf("Filename = %q", l.Filename())
-	}
 }
 
 func TestCommand(t *testing.T) {

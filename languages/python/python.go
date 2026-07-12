@@ -48,7 +48,6 @@ type pylint struct{}
 func New() linter.Linter { return pylint{} }
 
 func (pylint) Language() string { return "python" }
-func (pylint) Filename() string { return "solution.py" }
 
 func (pylint) Command(files []string) []string {
 	return append([]string{"pylint", "--output-format=json", "--disable=C0114,C0115,C0116"}, files...)

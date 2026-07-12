@@ -65,9 +65,10 @@ func docker(t *testing.T, args ...string) (string, string, int) {
 	return stdout.String(), stderr.String(), exitCode
 }
 
+// manifestEntry mirrors the contract §1 schema; workspace filenames are
+// core's deployment config and no longer part of the manifest.
 type manifestEntry struct {
-	Filename string   `json:"filename"`
-	Command  []string `json:"command"`
+	Command []string `json:"command"`
 }
 
 type manifestDoc struct {
@@ -93,6 +94,28 @@ func loadManifest(t *testing.T) manifestDoc {
 		t.Fatalf("manifest is not valid JSON: %v\n%s", err, stdout)
 	}
 	return m
+}
+
+// fixtureFile returns the single sample staged for lang/kind and its
+// basename, which is used as the workspace filename (naming files is core's
+// deployment config, so the fixtures carry their own lintable names).
+func fixtureFile(t *testing.T, lang, kind string) (hostPath, name string) {
+	t.Helper()
+	dir := filepath.Join("testdata", lang, kind)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("fixture dir missing: %s (every manifest language needs clean+dirty samples under tests/testdata)", dir)
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			files = append(files, e.Name())
+		}
+	}
+	if len(files) != 1 {
+		t.Fatalf("%s: want exactly one fixture file, got %v", dir, files)
+	}
+	return filepath.Join(dir, files[0]), files[0]
 }
 
 // lintFixture mounts hostPath→name pairs into /workspace and invokes the
@@ -172,9 +195,6 @@ func TestManifestSchema(t *testing.T) {
 		t.Fatal("manifest declares no languages")
 	}
 	for lang, entry := range m.Languages {
-		if entry.Filename == "" {
-			t.Errorf("%s: empty filename", lang)
-		}
 		if len(entry.Command) == 0 {
 			t.Errorf("%s: empty command", lang)
 			continue
@@ -198,12 +218,9 @@ func TestLanguagesCleanAndDirty(t *testing.T) {
 	for lang, entry := range m.Languages {
 		for _, kind := range []string{"clean", "dirty"} {
 			t.Run(lang+"/"+kind, func(t *testing.T) {
-				fixture := filepath.Join("testdata", lang, kind, entry.Filename)
-				if _, err := os.Stat(fixture); err != nil {
-					t.Fatalf("fixture missing: %s (every manifest language needs clean+dirty samples under tests/testdata)", fixture)
-				}
+				fixture, name := fixtureFile(t, lang, kind)
 				stdout, stderr, code := lintFixture(t, entry,
-					map[string]string{fixture: entry.Filename}, entry.Filename)
+					map[string]string{fixture: name}, name)
 				if code != 0 {
 					t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
 				}
@@ -227,9 +244,11 @@ func TestMultiFilePython(t *testing.T) {
 	if !ok {
 		t.Skip("manifest has no python")
 	}
+	cleanFixture, _ := fixtureFile(t, "python", "clean")
+	dirtyFixture, _ := fixtureFile(t, "python", "dirty")
 	mounts := map[string]string{
-		filepath.Join("testdata", "python", "clean", entry.Filename): "clean.py",
-		filepath.Join("testdata", "python", "dirty", entry.Filename): "dirty.py",
+		cleanFixture: "clean.py",
+		dirtyFixture: "dirty.py",
 	}
 	stdout, stderr, code := lintFixture(t, entry, mounts, "clean.py", "dirty.py")
 	if code != 0 {

@@ -10,10 +10,11 @@ docker pull ghcr.io/zinc-sig/linter:latest
 
 The image ships one static CLI, `/usr/local/bin/cobe-lint`, which implements
 the whole contract with [zinc-sig/core](https://github.com/zinc-sig/core):
-`cobe-lint manifest` prints the language manifest (filenames and lint
+`cobe-lint manifest` prints the language manifest (language keys and lint
 commands), and `cobe-lint lint <language> <file> [<file>...]` runs the native
 tool and prints unified findings JSON — exit `0` means findings are data,
-non-zero means operational failure. [`docs/CONTRACT.md`](docs/CONTRACT.md)
+non-zero means operational failure. Workspace filenames are core's
+deployment config, not the image's. [`docs/CONTRACT.md`](docs/CONTRACT.md)
 is the authoritative spec.
 
 ## Image contents
@@ -44,10 +45,12 @@ The image runs as the non-root `linter` user.
 2. Implement the `linter.Linter` interface in `languages/<lang>/`, with a
    `Parse` unit test on captured tool output in `languages/<lang>/testdata/`.
 3. Register it in [`languages/languages.go`](languages/languages.go) and add
-   `tests/testdata/<lang>/{clean,dirty}/<filename>` samples.
+   one lintable sample each under `tests/testdata/<lang>/{clean,dirty}/`.
 
 Then run `go test ./...` and the conformance suite (below) — both discover
-languages from the registry/manifest automatically.
+languages from the registry/manifest automatically. The workspace filename
+the new language lints under is configured on core's side (deployment
+config), not in this repo.
 
 ## Tags
 

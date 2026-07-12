@@ -38,9 +38,6 @@ func TestMetadata(t *testing.T) {
 	if l.Language() != "cpp" {
 		t.Errorf("Language = %q", l.Language())
 	}
-	if l.Filename() != "solution.cpp" {
-		t.Errorf("Filename = %q", l.Filename())
-	}
 }
 
 func TestParseDirty(t *testing.T) {

@@ -29,9 +29,11 @@ const binPath = "/usr/local/bin/cobe-lint"
 // manifestVersion is the manifest-schema version (contract §1).
 const manifestVersion = 1
 
+// manifestEntry describes one language. The filename a language is staged
+// under inside the workspace is core's deployment config and deliberately
+// not part of the manifest.
 type manifestEntry struct {
-	Filename string   `json:"filename"`
-	Command  []string `json:"command"`
+	Command []string `json:"command"`
 }
 
 type manifest struct {
@@ -43,7 +45,6 @@ func buildManifest(all []linter.Linter) manifest {
 	m := manifest{Version: manifestVersion, Languages: make(map[string]manifestEntry, len(all))}
 	for _, l := range all {
 		m.Languages[l.Language()] = manifestEntry{
-			Filename: l.Filename(),
 			// A plain argv prefix: callers append one or more
 			// workspace-relative file paths as trailing arguments.
 			Command: []string{binPath, "lint", l.Language()},

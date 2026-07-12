@@ -48,7 +48,6 @@ type checkstyle struct{}
 func New() linter.Linter { return checkstyle{} }
 
 func (checkstyle) Language() string { return "java" }
-func (checkstyle) Filename() string { return "Solution.java" }
 
 func (checkstyle) Command(files []string) []string {
 	return append([]string{"java", "-jar", jarPath, "-c", configPath, "-f", "xml"}, files...)

@@ -19,7 +19,6 @@ type govet struct{}
 func New() linter.Linter { return govet{} }
 
 func (govet) Language() string { return "go" }
-func (govet) Filename() string { return "solution.go" }
 
 // Command passes every file to a single `go vet` invocation: bare .go files
 // are compiled together as one "command-line-arguments" package, which

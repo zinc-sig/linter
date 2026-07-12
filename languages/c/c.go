@@ -7,4 +7,4 @@ import (
 )
 
 // New returns the c language implementation.
-func New() linter.Linter { return clangtidy.New("c", "solution.c") }
+func New() linter.Linter { return clangtidy.New("c") }
