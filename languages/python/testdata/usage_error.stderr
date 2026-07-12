@@ -1,0 +1,2 @@
+usage: pylint [options]
+pylint: error: Unrecognized option found: no-such-flag

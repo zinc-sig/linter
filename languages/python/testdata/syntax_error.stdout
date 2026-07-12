@@ -1,0 +1,15 @@
+[
+    {
+        "type": "error",
+        "module": "solution",
+        "obj": "",
+        "line": 1,
+        "column": 12,
+        "endLine": null,
+        "endColumn": null,
+        "path": "solution.py",
+        "symbol": "syntax-error",
+        "message": "Parsing failed: 'invalid syntax (solution, line 1)'",
+        "message-id": "E0001"
+    }
+]

@@ -1,0 +1,7 @@
+/workspace/solution.c:2:12: error: use of undeclared identifier 'undeclared_identifier' [clang-diagnostic-error]
+    2 |     return undeclared_identifier
+      |            ^
+/workspace/solution.c:2:33: error: expected ';' after return statement [clang-diagnostic-error]
+    2 |     return undeclared_identifier
+      |                                 ^
+      |                                 ;
