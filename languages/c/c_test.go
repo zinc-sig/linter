@@ -1,38 +1,12 @@
 package c
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/zinc-sig/linter/linter"
 )
-
-// loadCase reads a captured native-tool run from testdata: real clang-tidy
-// output recorded from the image (see <case>.exit for the exit status).
-func loadCase(t *testing.T, name string) (stdout, stderr []byte, exitCode int) {
-	t.Helper()
-	stdout, err := os.ReadFile(filepath.Join("testdata", name+".stdout"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stderr, err = os.ReadFile(filepath.Join("testdata", name+".stderr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join("testdata", name+".exit"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exitCode, err = strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return stdout, stderr, exitCode
-}
 
 func TestMetadata(t *testing.T) {
 	l := New()
@@ -43,7 +17,7 @@ func TestMetadata(t *testing.T) {
 
 func TestCommand(t *testing.T) {
 	got := New().Command([]string{"a.c", "b.c"})
-	want := []string{"clang-tidy", "a.c", "b.c", "--"}
+	want := []string{"clang-tidy", "a.c", "b.c", "--", "-std=" + CStandard}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
 	}
@@ -52,7 +26,7 @@ func TestCommand(t *testing.T) {
 // The dirty fixture contains one warning followed by two "note:" lines and
 // indented source-context lines — only the warning is a finding.
 func TestParseDirtySkipsNotes(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "dirty"))
+	report, err := New().Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -77,7 +51,7 @@ func TestParseDirtySkipsNotes(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "clean"))
+	report, err := New().Parse(nil, nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -89,11 +63,7 @@ func TestParseClean(t *testing.T) {
 // clang-tidy exits 1 on compile errors, but the diagnostics parse fine —
 // findings, not an operational failure.
 func TestParseCompileErrorIsFindings(t *testing.T) {
-	stdout, stderr, exitCode := loadCase(t, "compile_error")
-	if exitCode == 0 {
-		t.Fatalf("fixture exit = 0, want non-zero")
-	}
-	report, err := New().Parse(stdout, stderr, exitCode)
+	report, err := New().Parse([]byte(compileErrorStdout), []byte(compileErrorStderr), compileErrorExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

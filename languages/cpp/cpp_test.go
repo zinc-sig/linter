@@ -1,37 +1,11 @@
 package cpp
 
 import (
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
+	"slices"
 	"testing"
 
 	"github.com/zinc-sig/linter/linter"
 )
-
-// loadCase reads a captured native-tool run from testdata: real clang-tidy
-// output recorded from the image (see <case>.exit for the exit status).
-func loadCase(t *testing.T, name string) (stdout, stderr []byte, exitCode int) {
-	t.Helper()
-	stdout, err := os.ReadFile(filepath.Join("testdata", name+".stdout"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stderr, err = os.ReadFile(filepath.Join("testdata", name+".stderr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join("testdata", name+".exit"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exitCode, err = strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return stdout, stderr, exitCode
-}
 
 func TestMetadata(t *testing.T) {
 	l := New()
@@ -40,8 +14,16 @@ func TestMetadata(t *testing.T) {
 	}
 }
 
+func TestCommand(t *testing.T) {
+	got := New().Command([]string{"a.cpp"})
+	want := []string{"clang-tidy", "a.cpp", "--", "-std=" + CppStandard}
+	if !slices.Equal(got, want) {
+		t.Errorf("Command = %v, want %v", got, want)
+	}
+}
+
 func TestParseDirty(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "dirty"))
+	report, err := New().Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -63,7 +45,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "clean"))
+	report, err := New().Parse(nil, nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

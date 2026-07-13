@@ -1,3 +1,0 @@
-# command-line-arguments
-# [command-line-arguments]
-./solution.go:7:2: fmt.Printf format %d has arg name of wrong type string

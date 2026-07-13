@@ -1,9 +1,0 @@
-/workspace/solution.c:5:8: warning: Dereference of null pointer (loaded from variable 'p') [clang-analyzer-core.NullDereference]
-    5 |     *p = 42; /* null dereference */
-      |      ~ ^
-/workspace/solution.c:4:5: note: 'p' initialized to a null pointer value
-    4 |     int *p = 0;
-      |     ^~~~~~
-/workspace/solution.c:5:8: note: Dereference of null pointer (loaded from variable 'p')
-    5 |     *p = 42; /* null dereference */
-      |      ~ ^

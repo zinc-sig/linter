@@ -1,38 +1,12 @@
 package python
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/zinc-sig/linter/linter"
 )
-
-// loadCase reads a captured native-tool run from testdata: real pylint
-// output recorded from the image (see <case>.exit for the exit status).
-func loadCase(t *testing.T, name string) (stdout, stderr []byte, exitCode int) {
-	t.Helper()
-	stdout, err := os.ReadFile(filepath.Join("testdata", name+".stdout"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stderr, err = os.ReadFile(filepath.Join("testdata", name+".stderr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join("testdata", name+".exit"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exitCode, err = strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return stdout, stderr, exitCode
-}
 
 func TestMetadata(t *testing.T) {
 	l := New()
@@ -50,7 +24,7 @@ func TestCommand(t *testing.T) {
 }
 
 func TestParseDirty(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "dirty"))
+	report, err := New().Parse([]byte(dirtyStdout), nil, dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -77,7 +51,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "clean"))
+	report, err := New().Parse([]byte(cleanStdout), nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -89,11 +63,7 @@ func TestParseClean(t *testing.T) {
 // A Python syntax error makes pylint exit with the error bit set, but the
 // E0001 message is still valid JSON — a finding, not a failure.
 func TestParseSyntaxErrorIsFinding(t *testing.T) {
-	stdout, stderr, exitCode := loadCase(t, "syntax_error")
-	if exitCode&2 == 0 {
-		t.Fatalf("fixture exit = %d, expected the error bit", exitCode)
-	}
-	report, err := New().Parse(stdout, stderr, exitCode)
+	report, err := New().Parse([]byte(syntaxErrorStdout), nil, syntaxErrorExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -107,11 +77,7 @@ func TestParseSyntaxErrorIsFinding(t *testing.T) {
 
 // Exit bit 32 is a pylint usage error: an operational failure.
 func TestParseUsageError(t *testing.T) {
-	stdout, stderr, exitCode := loadCase(t, "usage_error")
-	if exitCode != 32 {
-		t.Fatalf("fixture exit = %d, want 32", exitCode)
-	}
-	if _, err := New().Parse(stdout, stderr, exitCode); err == nil {
+	if _, err := New().Parse(nil, []byte(usageErrorStderr), usageErrorExitCode); err == nil {
 		t.Fatal("Parse must fail on the usage-error bit")
 	} else if !strings.Contains(err.Error(), "usage error") {
 		t.Errorf("err = %v", err)
@@ -119,7 +85,7 @@ func TestParseUsageError(t *testing.T) {
 }
 
 func TestParseMultiFile(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "multifile"))
+	report, err := New().Parse([]byte(multifileStdout), nil, multifileExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

@@ -1,38 +1,12 @@
 package java
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/zinc-sig/linter/linter"
 )
-
-// loadCase reads a captured native-tool run from testdata: real checkstyle
-// output recorded from the image (see <case>.exit for the exit status).
-func loadCase(t *testing.T, name string) (stdout, stderr []byte, exitCode int) {
-	t.Helper()
-	stdout, err := os.ReadFile(filepath.Join("testdata", name+".stdout"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stderr, err = os.ReadFile(filepath.Join("testdata", name+".stderr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join("testdata", name+".exit"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exitCode, err = strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return stdout, stderr, exitCode
-}
 
 func TestMetadata(t *testing.T) {
 	l := New()
@@ -50,7 +24,7 @@ func TestCommand(t *testing.T) {
 }
 
 func TestParseDirty(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "dirty"))
+	report, err := New().Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -78,7 +52,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "clean"))
+	report, err := New().Parse([]byte(cleanStdout), nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -90,11 +64,7 @@ func TestParseClean(t *testing.T) {
 // Checkstyle throws (exit 254, no XML) on Java it cannot parse — an
 // operational failure, unlike pylint which reports syntax errors as data.
 func TestParseCrashIsOperationalFailure(t *testing.T) {
-	stdout, stderr, exitCode := loadCase(t, "crash")
-	if exitCode != 254 {
-		t.Fatalf("fixture exit = %d, want 254", exitCode)
-	}
-	_, err := New().Parse(stdout, stderr, exitCode)
+	_, err := New().Parse(nil, []byte(crashStderr), crashExitCode)
 	if err == nil {
 		t.Fatal("Parse must fail when checkstyle emits no XML")
 	}

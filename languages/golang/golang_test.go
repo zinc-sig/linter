@@ -1,38 +1,12 @@
 package golang
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/zinc-sig/linter/linter"
 )
-
-// loadCase reads a captured native-tool run from testdata: real `go vet`
-// output recorded from the image (see <case>.exit for the exit status).
-func loadCase(t *testing.T, name string) (stdout, stderr []byte, exitCode int) {
-	t.Helper()
-	stdout, err := os.ReadFile(filepath.Join("testdata", name+".stdout"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stderr, err = os.ReadFile(filepath.Join("testdata", name+".stderr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join("testdata", name+".exit"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exitCode, err = strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return stdout, stderr, exitCode
-}
 
 func TestMetadata(t *testing.T) {
 	l := New()
@@ -69,11 +43,7 @@ func TestEnvDefaults(t *testing.T) {
 // diagnostic parsed as a warning with the tool's "./" path kept verbatim
 // (normalization happens in linter.Run).
 func TestParseDirty(t *testing.T) {
-	stdout, stderr, exitCode := loadCase(t, "dirty")
-	if exitCode == 0 {
-		t.Fatal("fixture exit = 0, want non-zero (vet exits 1 on findings)")
-	}
-	report, err := New().Parse(stdout, stderr, exitCode)
+	report, err := New().Parse(nil, []byte(dirtyStderr), dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -98,7 +68,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse(loadCase(t, "clean"))
+	report, err := New().Parse(nil, nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -110,8 +80,7 @@ func TestParseClean(t *testing.T) {
 // Compile/typecheck failures come prefixed with "vet: " and map to
 // severity error — still data, exit 0 for the CLI.
 func TestParseCompileErrorIsErrorFinding(t *testing.T) {
-	stdout, stderr, exitCode := loadCase(t, "compile_error")
-	report, err := New().Parse(stdout, stderr, exitCode)
+	report, err := New().Parse(nil, []byte(compileErrorStderr), compileErrorExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

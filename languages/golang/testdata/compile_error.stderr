@@ -1,3 +1,0 @@
-# command-line-arguments
-# [command-line-arguments]
-vet: ./solution.go:4:7: undefined: foo

@@ -1,4 +1,21 @@
-com.puppycrawl.tools.checkstyle.api.CheckstyleException: Exception was thrown while processing Solution.java
+package java
+
+// Inline fixtures: real native checkstyle output captured by running the tool in
+// the image (workdir /workspace); the *ExitCode consts are the recorded
+// exit statuses of those runs.
+
+const cleanExitCode = 0
+
+const cleanStdout = `<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="10.21.1">
+<file name="/workspace/Solution.java">
+</file>
+</checkstyle>
+`
+
+const crashExitCode = 254
+
+const crashStderr = `com.puppycrawl.tools.checkstyle.api.CheckstyleException: Exception was thrown while processing Solution.java
 	at com.puppycrawl.tools.checkstyle.Checker.processFiles(Checker.java:312)
 	at com.puppycrawl.tools.checkstyle.Checker.process(Checker.java:226)
 	at com.puppycrawl.tools.checkstyle.Main.runCheckstyle(Main.java:415)
@@ -30,3 +47,18 @@ Caused by: java.lang.IllegalStateException: 2:0: mismatched input '<EOF>' expect
 Caused by: org.antlr.v4.runtime.InputMismatchException
 	... 17 more
 Checkstyle ends with 1 errors.
+`
+
+const dirtyExitCode = 2
+
+const dirtyStdout = `<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="10.21.1">
+<file name="/workspace/Solution.java">
+<error line="1" column="17" severity="error" message="Using the &apos;.*&apos; form of import should be avoided - java.util.*." source="com.puppycrawl.tools.checkstyle.checks.imports.AvoidStarImportCheck"/>
+<error line="5" column="9" severity="error" message="&apos;if&apos; construct must use &apos;{}&apos;s." source="com.puppycrawl.tools.checkstyle.checks.blocks.NeedBracesCheck"/>
+</file>
+</checkstyle>
+`
+
+const dirtyStderr = `Checkstyle ends with 2 errors.
+`

@@ -96,26 +96,148 @@ func loadManifest(t *testing.T) manifestDoc {
 	return m
 }
 
-// fixtureFile returns the single sample staged for lang/kind and its
-// basename, which is used as the workspace filename (naming files is core's
-// deployment config, so the fixtures carry their own lintable names).
+// fixture is an inline per-language source sample, staged into a temp dir
+// at test time under a meaningful lintable name (the workspace filename
+// itself is core's deployment config, not the image's).
+type fixture struct {
+	name    string
+	content string
+}
+
+var fixtures = map[string]map[string]fixture{
+	"python": {
+		"clean": {"solution.py", pythonClean},
+		"dirty": {"solution.py", pythonDirty},
+	},
+	"java": {
+		"clean": {"Solution.java", javaClean},
+		"dirty": {"Solution.java", javaDirty},
+	},
+	"c": {
+		"clean": {"solution.c", cClean},
+		"dirty": {"solution.c", cDirty},
+	},
+	"cpp": {
+		"clean": {"solution.cpp", cppClean},
+		"dirty": {"solution.cpp", cppDirty},
+	},
+	"go": {
+		"clean": {"solution.go", goClean},
+		"dirty": {"solution.go", goDirty},
+	},
+}
+
+const pythonClean = `def main():
+    return 0
+
+
+if __name__ == "__main__":
+    main()
+`
+
+// unused import and unused variable -> pylint W0611 + W0612
+const pythonDirty = `import os
+
+
+def main():
+    unused = 1
+    return 0
+
+
+if __name__ == "__main__":
+    main()
+`
+
+const javaClean = `public class Solution {
+    public static void main(String[] args) {
+        System.out.println("hello");
+    }
+}
+`
+
+// star import and braceless if -> checkstyle AvoidStarImport + NeedBraces
+const javaDirty = `import java.util.*;
+
+public class Solution {
+    public static void main(String[] args) {
+        if (args.length > 0)
+            System.out.println(args[0]);
+        System.out.println("hello");
+    }
+}
+`
+
+const cClean = `#include <stdio.h>
+
+int main(void) {
+    printf("hello\n");
+    return 0;
+}
+`
+
+// null dereference -> clang-analyzer-core.NullDereference
+const cDirty = `#include <stdio.h>
+
+int main(void) {
+    int *p = 0;
+    *p = 42; /* null dereference */
+    printf("%d\n", *p);
+    return 0;
+}
+`
+
+const cppClean = `#include <iostream>
+
+int main() {
+    std::cout << "hello" << std::endl;
+    return 0;
+}
+`
+
+// null dereference -> clang-analyzer-core.NullDereference
+const cppDirty = `#include <iostream>
+
+int main() {
+    int *p = nullptr;
+    *p = 42; // null dereference
+    std::cout << *p << std::endl;
+    return 0;
+}
+`
+
+const goClean = `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hello")
+}
+`
+
+// printf verb/argument mismatch -> go vet printf check
+const goDirty = `package main
+
+import "fmt"
+
+func main() {
+	name := "world"
+	fmt.Printf("%d\n", name)
+}
+`
+
+// fixtureFile writes the lang/kind sample into a temp dir and returns its
+// host path and filename.
 func fixtureFile(t *testing.T, lang, kind string) (hostPath, name string) {
 	t.Helper()
-	dir := filepath.Join("testdata", lang, kind)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("fixture dir missing: %s (every manifest language needs clean+dirty samples under tests/testdata)", dir)
+	f, ok := fixtures[lang][kind]
+	if !ok {
+		t.Fatalf("no %s fixture for language %q — add clean and dirty samples to the fixtures map", kind, lang)
 	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			files = append(files, e.Name())
-		}
+	path := filepath.Join(t.TempDir(), f.name)
+	if err := os.WriteFile(path, []byte(f.content), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("%s: want exactly one fixture file, got %v", dir, files)
-	}
-	return filepath.Join(dir, files[0]), files[0]
+	return path, f.name
 }
 
 // lintFixture mounts hostPath→name pairs into /workspace and invokes the
