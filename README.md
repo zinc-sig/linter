@@ -21,13 +21,27 @@ is the authoritative spec.
 
 | Toolchain | Version | Native invocation (run by `cobe-lint`) |
 |---|---|---|
-| Pylint (Python 3) | pinned via `PYLINT_VERSION` build arg | `pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
-| Checkstyle | pinned via `CHECKSTYLE_VERSION` build arg (JRE from Debian) | `java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
-| Clang-Tidy (c, cpp) | Debian 13 (trixie) repositories | `clang-tidy <files> --` |
-| Go | pinned via `GO_VERSION` build arg | `go vet <files>` |
+| Pylint (Python 3) | `python.PylintVersion` (3.3.*) | `pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
+| Checkstyle | `java.CheckstyleVersion` (10.21.1, JRE from Debian) | `java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
+| Clang-Tidy (c, cpp) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
+| Go | `golang.GoVersion` (1.24.0) | `go vet <files>` |
 
-Current pins live at the top of the [`Dockerfile`](Dockerfile) as `ARG`s —
-bumping a linter version is a one-line diff.
+Each pin lives as an exported const in its `languages/<lang>` package — a
+one-line diff to bump — and the Dockerfile build stage bakes them into the
+install steps via `cmd/toolversions`.
+
+## Language versions
+
+What language level each linter checks, pinned or probed in the image so a
+toolchain bump cannot silently move it:
+
+| Language | Linted as | Determined by |
+|---|---|---|
+| python | Python 3.13 | the image's `python3` interpreter running pylint (Debian 13) |
+| java | Java syntax up to 21 | `java.CheckstyleVersion` grammar, on OpenJDK 21 (`default-jre-headless`) |
+| c | `-std=gnu17` | `c.CStandard` (pins clang 19's probed default) |
+| cpp | `-std=gnu++17` | `cpp.CppStandard` (pins clang 19's probed default) |
+| go | Go 1.24 | `golang.GoVersion` toolchain's typechecker |
 
 ## Key paths
 
@@ -40,17 +54,14 @@ The image runs as the non-root `linter` user.
 
 ## Adding a language (fork guide)
 
-1. Install the tool in the [`Dockerfile`](Dockerfile) (pin the version via an
-   `ARG`).
-2. Implement the `linter.Linter` interface in `languages/<lang>/`, with a
-   `Parse` unit test on captured tool output in `languages/<lang>/testdata/`.
-3. Register it in [`languages/languages.go`](languages/languages.go) and add
-   one lintable sample each under `tests/testdata/<lang>/{clean,dirty}/`.
-
-Then run `go test ./...` and the conformance suite (below) — both discover
-languages from the registry/manifest automatically. The workspace filename
-the new language lints under is configured on core's side (deployment
-config), not in this repo.
+In short: implement `linter.Linter` in `languages/<lang>/` (with an inline-
+fixture `Parse` unit test and a version const), install the tool in the
+[`Dockerfile`](Dockerfile), and register the language in
+[`languages/languages.go`](languages/languages.go) — everything else
+(manifest, CLI, conformance tests) derives from the registry. The workspace
+filename the language lints under is core's deployment config, not this
+repo's. See [`docs/ADDING_A_LANGUAGE.md`](docs/ADDING_A_LANGUAGE.md) for a
+complete worked example (shellcheck).
 
 ## Tags
 
