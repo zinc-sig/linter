@@ -85,6 +85,9 @@ func New() linter.Linter { return shellcheck{} }
 
 func (shellcheck) Language() string { return "shell" }
 
+// Name is the display name served to UI/API surfaces.
+func (shellcheck) Name() string { return "Shell" }
+
 // Command passes every file to one shellcheck invocation; findings carry
 // per-file paths.
 func (shellcheck) Command(files []string) []string {
@@ -182,7 +185,8 @@ shell.New(),
 ```
 
 `cobe-lint manifest` now advertises
-`"shell": {"command": ["/usr/local/bin/cobe-lint", "lint", "shell"]}` and
+`"shell": {"name": "Shell", "command": ["/usr/local/bin/cobe-lint", "lint", "shell"]}`
+and
 the conformance suite will demand fixtures for it.
 
 ## 5. Unit-test Parse on inline fixtures

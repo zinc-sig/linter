@@ -25,6 +25,9 @@ func New() linter.Linter { return govet{} }
 
 func (govet) Language() string { return "go" }
 
+// Name is the display name served to UI/API surfaces.
+func (govet) Name() string { return "Go" }
+
 // Command passes every file to a single `go vet` invocation: bare .go files
 // are compiled together as one "command-line-arguments" package, which
 // matches how the workspace is staged. Files from mixed packages make the

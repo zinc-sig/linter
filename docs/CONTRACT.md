@@ -19,6 +19,7 @@ writes to stdout: the supported-language set (also served via core's public
   "version": 1,
   "languages": {
     "python313": {
+      "name": "Python 3.13",
       "command": ["/usr/local/bin/cobe-lint", "lint", "python313"]
     }
   }
@@ -29,6 +30,9 @@ writes to stdout: the supported-language set (also served via core's public
   major version it does not know.
 - `languages` (object, required): key = language identifier (lowercase,
   `[a-z0-9_+-]+`), value:
+  - `name` (string, required): human-readable display name for UI/API
+    surfaces (e.g. `Python 3.13`); the map key remains the stable
+    identifier.
   - `command` (array of strings, required): argv **prefix** to exec inside
     the linter container. The caller appends one or more workspace-relative
     file paths as trailing arguments — there are no placeholders. No shell is
@@ -113,7 +117,8 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 
 ## 6. Adding a language
 
-Implement the `linter.Linter` interface (`Language`, `Command`, `Parse`) in
+Implement the `linter.Linter` interface (`Language`, `Name`, `Command`,
+`Parse`) in
 a new `languages/<lang>/` package and register it in
 `languages/languages.go` — the manifest, the CLI, and the conformance tests
 all derive from that registry automatically. No filename is involved: the

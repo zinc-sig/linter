@@ -55,6 +55,9 @@ func New() linter.Linter { return checkstyle{} }
 
 func (checkstyle) Language() string { return "java" }
 
+// Name is the display name served to UI/API surfaces.
+func (checkstyle) Name() string { return "Java" }
+
 func (checkstyle) Command(files []string) []string {
 	return append([]string{"java", "-jar", jarPath, "-c", configPath, "-f", "xml"}, files...)
 }

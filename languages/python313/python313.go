@@ -58,6 +58,10 @@ func New() linter.Linter { return pylint{} }
 
 func (pylint) Language() string { return "python313" }
 
+// Name is the display name served to UI/API surfaces; like the package
+// doc says, it names the interpreter baked into the image.
+func (pylint) Name() string { return "Python 3.13" }
+
 func (pylint) Command(files []string) []string {
 	return append([]string{"pylint", "--output-format=json", "--disable=C0114,C0115,C0116"}, files...)
 }

@@ -15,4 +15,4 @@ import (
 const CppStandard = "gnu++11"
 
 // New returns the cpp11 language implementation.
-func New() linter.Linter { return clangtidy.New("cpp11", CppStandard) }
+func New() linter.Linter { return clangtidy.New("cpp11", "C++11", CppStandard) }

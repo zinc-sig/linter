@@ -48,6 +48,9 @@ type Report struct {
 type Linter interface {
 	// Language is the manifest key, e.g. "python313".
 	Language() string
+	// Name is the human-readable display name served to UI/API surfaces,
+	// e.g. "Python 3.13"; Language stays the stable identifier.
+	Name() string
 	// Command returns the native tool argv for linting files. No shell is
 	// involved; the argv is exec'd as-is.
 	Command(files []string) []string

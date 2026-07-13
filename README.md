@@ -10,8 +10,8 @@ docker pull ghcr.io/zinc-sig/linter:latest
 
 The image ships one static CLI, `/usr/local/bin/cobe-lint`, which implements
 the whole contract with [zinc-sig/core](https://github.com/zinc-sig/core):
-`cobe-lint manifest` prints the language manifest (language keys and lint
-commands), and `cobe-lint lint <language> <file> [<file>...]` runs the native
+`cobe-lint manifest` prints the language manifest (language ids, display
+names, and lint commands), and `cobe-lint lint <language> <file> [<file>...]` runs the native
 tool and prints unified findings JSON — exit `0` means findings are data,
 non-zero means operational failure. Workspace filenames are core's
 deployment config, not the image's. [`docs/CONTRACT.md`](docs/CONTRACT.md)

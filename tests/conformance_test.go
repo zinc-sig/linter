@@ -66,8 +66,9 @@ func docker(t *testing.T, args ...string) (string, string, int) {
 }
 
 // manifestEntry mirrors the contract §1 schema; workspace filenames are
-// core's deployment config and no longer part of the manifest.
+// core's deployment config and not part of the manifest.
 type manifestEntry struct {
+	Name    string   `json:"name"`
 	Command []string `json:"command"`
 }
 
@@ -321,6 +322,9 @@ func TestManifestSchema(t *testing.T) {
 		t.Fatal("manifest declares no languages")
 	}
 	for lang, entry := range m.Languages {
+		if entry.Name == "" {
+			t.Errorf("%s: empty display name", lang)
+		}
 		if len(entry.Command) == 0 {
 			t.Errorf("%s: empty command", lang)
 			continue

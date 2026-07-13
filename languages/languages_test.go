@@ -10,6 +10,9 @@ func TestRegistry(t *testing.T) {
 	var keys []string
 	for _, l := range all {
 		keys = append(keys, l.Language())
+		if l.Name() == "" {
+			t.Errorf("%s: empty display Name", l.Language())
+		}
 		argv := l.Command([]string{"input-file"})
 		if len(argv) == 0 {
 			t.Errorf("%s: empty Command", l.Language())

@@ -32,6 +32,9 @@ func TestManifest(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest is missing python313")
 	}
+	if entry.Name != "Python 3.13" {
+		t.Errorf("python313 name = %q, want %q", entry.Name, "Python 3.13")
+	}
 	// The command is a plain argv prefix — no {file}/{files} placeholders;
 	// consumers append file paths as trailing arguments.
 	want := []string{binPath, "lint", "python313"}
@@ -39,6 +42,9 @@ func TestManifest(t *testing.T) {
 		t.Errorf("python313 command = %v, want %v", entry.Command, want)
 	}
 	for lang, e := range m.Languages {
+		if e.Name == "" {
+			t.Errorf("%s: empty display name", lang)
+		}
 		for _, arg := range e.Command {
 			if strings.Contains(arg, "{") {
 				t.Errorf("%s: command argument %q contains a placeholder", lang, arg)

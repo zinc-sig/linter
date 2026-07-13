@@ -33,6 +33,7 @@ const manifestVersion = 1
 // under inside the workspace is core's deployment config and deliberately
 // not part of the manifest.
 type manifestEntry struct {
+	Name    string   `json:"name"`
 	Command []string `json:"command"`
 }
 
@@ -45,6 +46,7 @@ func buildManifest(all []linter.Linter) manifest {
 	m := manifest{Version: manifestVersion, Languages: make(map[string]manifestEntry, len(all))}
 	for _, l := range all {
 		m.Languages[l.Language()] = manifestEntry{
+			Name: l.Name(),
 			// A plain argv prefix: callers append one or more
 			// workspace-relative file paths as trailing arguments.
 			Command: []string{binPath, "lint", l.Language()},

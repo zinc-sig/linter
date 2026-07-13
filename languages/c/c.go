@@ -15,4 +15,4 @@ import (
 const CStandard = "gnu17"
 
 // New returns the c language implementation.
-func New() linter.Linter { return clangtidy.New("c", CStandard) }
+func New() linter.Linter { return clangtidy.New("c", "C", CStandard) }

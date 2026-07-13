@@ -30,19 +30,23 @@ var severityByName = map[string]string{
 }
 
 // Linter is a clang-tidy-backed implementation of linter.Linter,
-// parameterized by manifest language key and the -std= language standard.
+// parameterized by manifest language key, display name, and the -std=
+// language standard.
 type Linter struct {
 	language string
+	name     string
 	std      string
 }
 
-// New returns a clang-tidy linter for the given language key, checking
-// against the given language standard (e.g. "gnu17", "gnu++17").
-func New(language, std string) *Linter {
-	return &Linter{language: language, std: std}
+// New returns a clang-tidy linter for the given language key and display
+// name, checking against the given language standard (e.g. "gnu17",
+// "gnu++11").
+func New(language, name, std string) *Linter {
+	return &Linter{language: language, name: name, std: std}
 }
 
 func (l *Linter) Language() string { return l.language }
+func (l *Linter) Name() string     { return l.name }
 
 func (l *Linter) Command(files []string) []string {
 	// The "--" compiles with default flags instead of looking for a
