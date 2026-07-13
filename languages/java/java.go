@@ -18,6 +18,9 @@ import (
 const CheckstyleVersion = "10.21.1"
 
 const (
+	// javaPath is the jlink'ed minimal runtime built for the checkstyle
+	// jar (see the Dockerfile's jre stage) — the image ships no full JRE.
+	javaPath   = "/opt/java/bin/java"
 	jarPath    = "/opt/checkstyle.jar"
 	configPath = "/opt/checkstyle-config.xml"
 )
@@ -59,7 +62,7 @@ func (checkstyle) Language() string { return "java" }
 func (checkstyle) Name() string { return "Java" }
 
 func (checkstyle) Command(files []string) []string {
-	return append([]string{"java", "-jar", jarPath, "-c", configPath, "-f", "xml"}, files...)
+	return append([]string{javaPath, "-jar", jarPath, "-c", configPath, "-f", "xml"}, files...)
 }
 
 func (checkstyle) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {

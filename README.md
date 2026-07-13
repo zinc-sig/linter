@@ -23,7 +23,7 @@ is the authoritative spec.
 |---|---|---|
 | Pylint (per interpreter) | `PylintVersion` (3.3.*, shared by the python packages) | `/opt/python/<version>/bin/pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
 | CPython (python312, python313) | `python<NN>.PythonVersion` consts, installed by a pinned [uv](https://github.com/astral-sh/uv) | interpreters under `/opt/python-interpreters`, one pylint venv per pin at `/opt/python/<version>` |
-| Checkstyle | `java.CheckstyleVersion` (10.21.1, JRE from Debian) | `java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
+| Checkstyle | `java.CheckstyleVersion` (10.21.1, on a jlink'ed minimal Java 21 runtime) | `/opt/java/bin/java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
 | Clang-Tidy (c, cpp11, cpp14) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
 | Go | `golang.GoVersion` (1.24.0) | `go vet <files>` |
 
@@ -51,6 +51,7 @@ toolchain bump cannot silently move it:
 - `/usr/local/bin/cobe-lint` — the unified CLI (the only path core hardcodes)
 - `/opt/checkstyle.jar`, `/opt/checkstyle-config.xml` — Checkstyle JAR and
   configuration (based on Google's Java Style Guide)
+- `/opt/java` — jlink'ed minimal Java runtime that runs checkstyle
 - `/workspace` — working directory for lint runs
 
 The image runs as the non-root `linter` user.

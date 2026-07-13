@@ -17,7 +17,7 @@ func TestMetadata(t *testing.T) {
 
 func TestCommand(t *testing.T) {
 	got := New().Command([]string{"A.java", "B.java"})
-	want := []string{"java", "-jar", "/opt/checkstyle.jar", "-c", "/opt/checkstyle-config.xml", "-f", "xml", "A.java", "B.java"}
+	want := []string{"/opt/java/bin/java", "-jar", "/opt/checkstyle.jar", "-c", "/opt/checkstyle-config.xml", "-f", "xml", "A.java", "B.java"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
 	}
