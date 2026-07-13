@@ -21,7 +21,8 @@ is the authoritative spec.
 
 | Toolchain | Version | Native invocation (run by `cobe-lint`) |
 |---|---|---|
-| Pylint (Python 3) | `python313.PylintVersion` (3.3.*) | `pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
+| Pylint (per interpreter) | `PylintVersion` (3.3.*, shared by the python packages) | `/opt/python/<version>/bin/pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
+| CPython (python312, python313) | `python<NN>.PythonVersion` consts, installed by a pinned [uv](https://github.com/astral-sh/uv) | interpreters under `/opt/python-interpreters`, one pylint venv per pin at `/opt/python/<version>` |
 | Checkstyle | `java.CheckstyleVersion` (10.21.1, JRE from Debian) | `java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
 | Clang-Tidy (c, cpp11, cpp14) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
 | Go | `golang.GoVersion` (1.24.0) | `go vet <files>` |
@@ -37,7 +38,8 @@ toolchain bump cannot silently move it:
 
 | Language | Linted as | Determined by |
 |---|---|---|
-| python313 | Python 3.13.5 | the image's `python3` interpreter running pylint (Debian 13) |
+| python312 | Python 3.12.13 | pinned via `python312.PythonVersion` (uv standalone build) |
+| python313 | Python 3.13.14 | pinned via `python313.PythonVersion` (uv standalone build) |
 | java | Java syntax up to 21 | `java.CheckstyleVersion` grammar, on OpenJDK 21 (`default-jre-headless`) |
 | c | `-std=gnu17` | `c.CStandard` (pins clang 19's probed default) |
 | cpp11 | `-std=gnu++11` | `cpp11.CppStandard` (GNU dialect, matching the gnu17 precedent) |

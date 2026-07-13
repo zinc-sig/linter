@@ -19,7 +19,8 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cobe-lint ./cmd/co
 # --- runtime stage -----------------------------------------------------------
 # Pinned to the Debian 13 (trixie) slim variant rather than the floating
 # `stable-slim` tag so a Debian major release can't silently change the
-# clang-tidy / Python toolchains.
+# clang-tidy toolchain. Python deliberately does NOT come from Debian: the
+# python<NN> language packages pin exact CPython releases installed below.
 FROM debian:13-slim
 
 LABEL org.opencontainers.image.source="https://github.com/zinc-sig/linter" \
@@ -33,8 +34,6 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 COPY --from=build /out/tool-versions.sh /opt/tool-versions.sh
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
     default-jre-headless \
     clang-tidy \
     curl \
@@ -42,9 +41,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     coreutils \
     && rm -rf /var/lib/apt/lists/*
 
-# hadolint ignore=SC1091
+# uv installs the pinned CPython interpreters below. Copied from the
+# official image — pinned by tag, never `latest`, for reproducibility —
+# whose multi-arch manifest covers both amd64 and arm64 builds without a
+# curl|sh bootstrap.
+COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /usr/local/bin/uv
+
+# Managed interpreters must live outside /root (0700) so the non-root
+# linter user can reach them; no download cache is kept in the image.
+ENV UV_PYTHON_INSTALL_DIR=/opt/python-interpreters \
+    UV_NO_CACHE=1
+
+# One interpreter + pylint virtualenv per python<NN> language pin, at the
+# stable /opt/python/<version> paths that languages/internal/pylint
+# derives. Everything is baked at build time; lint runs stay offline.
+# SC2086: ${PYTHON_VERSIONS} is a space-separated list — splitting is the
+# point.
+# hadolint ignore=SC1091,SC2086
 RUN . /opt/tool-versions.sh \
-    && pip3 install --no-cache-dir --break-system-packages "pylint==${PYLINT_VERSION}" \
+    && for ver in ${PYTHON_VERSIONS}; do \
+    uv python install "${ver}" \
+    && uv venv --python "${ver}" "/opt/python/${ver}" \
+    && uv pip install --python "/opt/python/${ver}/bin/python" "pylint==${PYLINT_VERSION}" \
+    || exit 1; \
+    done \
     && curl -fsSL "https://github.com/checkstyle/checkstyle/releases/download/checkstyle-${CHECKSTYLE_VERSION}/checkstyle-${CHECKSTYLE_VERSION}-all.jar" \
     -o /opt/checkstyle.jar
 

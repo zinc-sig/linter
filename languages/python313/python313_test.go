@@ -10,6 +10,9 @@ import (
 
 func TestMetadata(t *testing.T) {
 	l := New()
+	if l.Name() != "Python 3.13" {
+		t.Errorf("Name = %q", l.Name())
+	}
 	if l.Language() != "python313" {
 		t.Errorf("Language = %q", l.Language())
 	}
@@ -17,7 +20,7 @@ func TestMetadata(t *testing.T) {
 
 func TestCommand(t *testing.T) {
 	got := New().Command([]string{"a.py", "b.py"})
-	want := []string{"pylint", "--output-format=json", "--disable=C0114,C0115,C0116", "a.py", "b.py"}
+	want := []string{"/opt/python/" + PythonVersion + "/bin/pylint", "--output-format=json", "--disable=C0114,C0115,C0116", "a.py", "b.py"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
 	}

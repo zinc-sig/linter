@@ -155,6 +155,13 @@ Tools that come from Debian's repositories (like clang-tidy) skip this step
 entirely — the base-image pin determines their version; say so in the
 package doc instead.
 
+Interpreter-backed languages follow a third pattern: the python<NN>
+packages each pin an exact interpreter release (`PythonVersion`) alongside
+the shared tool pin, `cmd/toolversions` exports the list, and the
+Dockerfile installs one uv-managed interpreter plus tool virtualenv per pin
+at `/opt/python/<version>` — `Command()` derives the executable path from
+the const (see `languages/internal/pylint`).
+
 ## 3. Install the tool in the Dockerfile
 
 In the runtime stage, sourcing the generated pins (the release tarball

@@ -9,6 +9,7 @@ import (
 	"github.com/zinc-sig/linter/languages/cpp14"
 	"github.com/zinc-sig/linter/languages/golang"
 	"github.com/zinc-sig/linter/languages/java"
+	"github.com/zinc-sig/linter/languages/python312"
 	"github.com/zinc-sig/linter/languages/python313"
 	"github.com/zinc-sig/linter/linter"
 )
@@ -22,6 +23,7 @@ func All() []linter.Linter {
 		cpp14.New(),
 		golang.New(),
 		java.New(),
+		python312.New(),
 		python313.New(),
 	}
 }

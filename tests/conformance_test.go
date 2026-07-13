@@ -106,6 +106,10 @@ type fixture struct {
 }
 
 var fixtures = map[string]map[string]fixture{
+	"python312": {
+		"clean": {"solution.py", pythonClean},
+		"dirty": {"solution.py", pythonDirty},
+	},
 	"python313": {
 		"clean": {"solution.py", pythonClean},
 		"dirty": {"solution.py", pythonDirty},

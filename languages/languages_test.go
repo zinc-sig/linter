@@ -22,7 +22,7 @@ func TestRegistry(t *testing.T) {
 		}
 	}
 	slices.Sort(keys)
-	want := []string{"c", "cpp11", "cpp14", "go", "java", "python313"}
+	want := []string{"c", "cpp11", "cpp14", "go", "java", "python312", "python313"}
 	if !slices.Equal(keys, want) {
 		t.Errorf("registry keys = %v, want %v", keys, want)
 	}

@@ -10,11 +10,13 @@ import (
 
 	"github.com/zinc-sig/linter/languages/golang"
 	"github.com/zinc-sig/linter/languages/java"
+	"github.com/zinc-sig/linter/languages/python312"
 	"github.com/zinc-sig/linter/languages/python313"
 )
 
 func main() {
 	fmt.Printf("PYLINT_VERSION='%s'\n", python313.PylintVersion)
+	fmt.Printf("PYTHON_VERSIONS='%s %s'\n", python312.PythonVersion, python313.PythonVersion)
 	fmt.Printf("CHECKSTYLE_VERSION='%s'\n", java.CheckstyleVersion)
 	fmt.Printf("GO_VERSION='%s'\n", golang.GoVersion)
 }
