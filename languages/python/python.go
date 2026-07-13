@@ -8,6 +8,12 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// PylintVersion is the pylint release installed into the image, as a pip
+// requirement specifier; cmd/toolversions feeds it to the Dockerfile build.
+// The Python language level linted is that of the image's python3
+// interpreter that runs pylint (Debian 13 ships Python 3.13).
+const PylintVersion = "3.3.*"
+
 // pylint's exit status is a bit field: 1 fatal, 2 error, 4 warning,
 // 8 refactor, 16 convention, 32 usage error. Message bits — including
 // fatal — still come with parseable JSON findings and are data; only the

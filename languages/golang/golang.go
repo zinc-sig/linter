@@ -10,6 +10,11 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// GoVersion is the Go toolchain release installed into the image;
+// cmd/toolversions feeds it to the Dockerfile build. It pins both the vet
+// binary and the Go language version its typechecker assumes for bare files.
+const GoVersion = "1.24.0"
+
 // diagRE matches vet diagnostics: path:line[:col]: message
 var diagRE = regexp.MustCompile(`^([^\s:][^:]*\.go):(\d+)(?::(\d+))?: (.+)$`)
 

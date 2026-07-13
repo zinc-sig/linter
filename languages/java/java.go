@@ -11,6 +11,12 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// CheckstyleVersion is the Checkstyle release baked into the image;
+// cmd/toolversions feeds it to the Dockerfile build. Its grammar determines
+// the Java language level accepted (10.21.1 parses source up to Java 21); it
+// runs on the image's default-jre-headless (OpenJDK 21 on Debian 13).
+const CheckstyleVersion = "10.21.1"
+
 const (
 	jarPath    = "/opt/checkstyle.jar"
 	configPath = "/opt/checkstyle-config.xml"
