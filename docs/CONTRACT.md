@@ -18,8 +18,8 @@ writes to stdout: the supported-language set (also served via core's public
 {
   "version": 1,
   "languages": {
-    "python": {
-      "command": ["/usr/local/bin/cobe-lint", "lint", "python"]
+    "python313": {
+      "command": ["/usr/local/bin/cobe-lint", "lint", "python313"]
     }
   }
 }
@@ -45,7 +45,7 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 ```json
 {
   "version": 1,
-  "language": "python",
+  "language": "python313",
   "tool": "pylint 3.3.9",
   "findings": [
     {

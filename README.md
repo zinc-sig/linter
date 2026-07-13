@@ -21,9 +21,9 @@ is the authoritative spec.
 
 | Toolchain | Version | Native invocation (run by `cobe-lint`) |
 |---|---|---|
-| Pylint (Python 3) | `python.PylintVersion` (3.3.*) | `pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
+| Pylint (Python 3) | `python313.PylintVersion` (3.3.*) | `pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
 | Checkstyle | `java.CheckstyleVersion` (10.21.1, JRE from Debian) | `java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
-| Clang-Tidy (c, cpp) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
+| Clang-Tidy (c, cpp11, cpp14) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
 | Go | `golang.GoVersion` (1.24.0) | `go vet <files>` |
 
 Each pin lives as an exported const in its `languages/<lang>` package — a
@@ -37,10 +37,11 @@ toolchain bump cannot silently move it:
 
 | Language | Linted as | Determined by |
 |---|---|---|
-| python | Python 3.13 | the image's `python3` interpreter running pylint (Debian 13) |
+| python313 | Python 3.13.5 | the image's `python3` interpreter running pylint (Debian 13) |
 | java | Java syntax up to 21 | `java.CheckstyleVersion` grammar, on OpenJDK 21 (`default-jre-headless`) |
 | c | `-std=gnu17` | `c.CStandard` (pins clang 19's probed default) |
-| cpp | `-std=gnu++17` | `cpp.CppStandard` (pins clang 19's probed default) |
+| cpp11 | `-std=gnu++11` | `cpp11.CppStandard` (GNU dialect, matching the gnu17 precedent) |
+| cpp14 | `-std=gnu++14` | `cpp14.CppStandard` (GNU dialect, matching the gnu17 precedent) |
 | go | Go 1.24 | `golang.GoVersion` toolchain's typechecker |
 
 ## Key paths

@@ -1,4 +1,4 @@
-package cpp
+package cpp11
 
 import (
 	"slices"
@@ -9,7 +9,7 @@ import (
 
 func TestMetadata(t *testing.T) {
 	l := New()
-	if l.Language() != "cpp" {
+	if l.Language() != "cpp11" {
 		t.Errorf("Language = %q", l.Language())
 	}
 }
@@ -39,7 +39,7 @@ func TestParseDirty(t *testing.T) {
 	if got != want {
 		t.Errorf("finding = %+v, want %+v", got, want)
 	}
-	if report.Language != "cpp" {
+	if report.Language != "cpp11" {
 		t.Errorf("language = %q", report.Language)
 	}
 }

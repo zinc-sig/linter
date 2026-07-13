@@ -243,7 +243,7 @@ func TestParseGarbageIsOperationalFailure(t *testing.T) {
 
 Also cover your tool's edge cases the way the existing packages do:
 severity fallbacks, missing columns, the exit-code boundary (compare
-`languages/python/python_test.go` and `languages/c/c_test.go`).
+`languages/python313/python313_test.go` and `languages/c/c_test.go`).
 
 ## 6. Add conformance samples
 

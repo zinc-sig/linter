@@ -1,4 +1,4 @@
-package python
+package python313
 
 import (
 	"slices"
@@ -10,7 +10,7 @@ import (
 
 func TestMetadata(t *testing.T) {
 	l := New()
-	if l.Language() != "python" {
+	if l.Language() != "python313" {
 		t.Errorf("Language = %q", l.Language())
 	}
 }
@@ -45,7 +45,7 @@ func TestParseDirty(t *testing.T) {
 	if !strings.HasPrefix(report.Tool, "pylint") {
 		t.Errorf("tool = %q", report.Tool)
 	}
-	if report.Version != 1 || report.Language != "python" {
+	if report.Version != 1 || report.Language != "python313" {
 		t.Errorf("header = %d/%q", report.Version, report.Language)
 	}
 }

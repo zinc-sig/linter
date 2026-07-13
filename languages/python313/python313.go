@@ -1,5 +1,8 @@
-// Package python lints Python sources with pylint.
-package python
+// Package python313 lints Python sources with pylint (manifest key
+// "python313"). The version suffix names the interpreter baked into the
+// image — Debian 13 ships Python 3.13 — so forks built on a different
+// base image rename the package and key accordingly.
+package python313
 
 import (
 	"encoding/json"
@@ -53,7 +56,7 @@ type pylint struct{}
 // New returns the python language implementation.
 func New() linter.Linter { return pylint{} }
 
-func (pylint) Language() string { return "python" }
+func (pylint) Language() string { return "python313" }
 
 func (pylint) Command(files []string) []string {
 	return append([]string{"pylint", "--output-format=json", "--disable=C0114,C0115,C0116"}, files...)
@@ -97,7 +100,7 @@ func (pylint) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) 
 
 	return linter.Report{
 		Version:  linter.ReportVersion,
-		Language: "python",
+		Language: "python313",
 		Tool:     linter.ToolVersion("pylint", `pylint\s+(\S+)`, "pylint", "--version"),
 		Findings: findings,
 	}, nil

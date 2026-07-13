@@ -1,4 +1,4 @@
-package cpp
+package cpp11
 
 // Inline fixtures: real native clang-tidy output captured by running the tool in
 // the image (workdir /workspace); the *ExitCode consts are the recorded

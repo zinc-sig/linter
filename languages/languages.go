@@ -5,10 +5,11 @@ package languages
 
 import (
 	"github.com/zinc-sig/linter/languages/c"
-	"github.com/zinc-sig/linter/languages/cpp"
+	"github.com/zinc-sig/linter/languages/cpp11"
+	"github.com/zinc-sig/linter/languages/cpp14"
 	"github.com/zinc-sig/linter/languages/golang"
 	"github.com/zinc-sig/linter/languages/java"
-	"github.com/zinc-sig/linter/languages/python"
+	"github.com/zinc-sig/linter/languages/python313"
 	"github.com/zinc-sig/linter/linter"
 )
 
@@ -17,9 +18,10 @@ import (
 func All() []linter.Linter {
 	return []linter.Linter{
 		c.New(),
-		cpp.New(),
+		cpp11.New(),
+		cpp14.New(),
 		golang.New(),
 		java.New(),
-		python.New(),
+		python313.New(),
 	}
 }

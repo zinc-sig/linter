@@ -46,7 +46,7 @@ type Report struct {
 // filename a language is staged under inside the workspace is core's
 // deployment config, not part of this interface.
 type Linter interface {
-	// Language is the manifest key, e.g. "python".
+	// Language is the manifest key, e.g. "python313".
 	Language() string
 	// Command returns the native tool argv for linting files. No shell is
 	// involved; the argv is exec'd as-is.

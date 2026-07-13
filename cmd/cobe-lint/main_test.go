@@ -28,15 +28,15 @@ func TestManifest(t *testing.T) {
 	if len(m.Languages) != len(languages.All()) {
 		t.Errorf("languages = %d, want %d", len(m.Languages), len(languages.All()))
 	}
-	entry, ok := m.Languages["python"]
+	entry, ok := m.Languages["python313"]
 	if !ok {
-		t.Fatal("manifest is missing python")
+		t.Fatal("manifest is missing python313")
 	}
 	// The command is a plain argv prefix — no {file}/{files} placeholders;
 	// consumers append file paths as trailing arguments.
-	want := []string{binPath, "lint", "python"}
+	want := []string{binPath, "lint", "python313"}
 	if !slices.Equal(entry.Command, want) {
-		t.Errorf("python command = %v, want %v", entry.Command, want)
+		t.Errorf("python313 command = %v, want %v", entry.Command, want)
 	}
 	for lang, e := range m.Languages {
 		for _, arg := range e.Command {
@@ -72,14 +72,14 @@ func TestUnknownLanguage(t *testing.T) {
 		t.Fatalf("exit = %d, want 2", code)
 	}
 	if !strings.Contains(stderr.String(), "unknown language") ||
-		!strings.Contains(stderr.String(), "python") {
+		!strings.Contains(stderr.String(), "python313") {
 		t.Errorf("stderr = %q, want unknown-language diagnostic listing supported keys", stderr.String())
 	}
 }
 
 func TestMissingFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"lint", "python", "/no/such/file.py"}, &stdout, &stderr); code != 1 {
+	if code := run([]string{"lint", "python313", "/no/such/file.py"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "not readable") {

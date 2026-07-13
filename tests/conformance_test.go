@@ -105,7 +105,7 @@ type fixture struct {
 }
 
 var fixtures = map[string]map[string]fixture{
-	"python": {
+	"python313": {
 		"clean": {"solution.py", pythonClean},
 		"dirty": {"solution.py", pythonDirty},
 	},
@@ -117,7 +117,11 @@ var fixtures = map[string]map[string]fixture{
 		"clean": {"solution.c", cClean},
 		"dirty": {"solution.c", cDirty},
 	},
-	"cpp": {
+	"cpp11": {
+		"clean": {"solution.cpp", cppClean},
+		"dirty": {"solution.cpp", cppDirty},
+	},
+	"cpp14": {
 		"clean": {"solution.cpp", cppClean},
 		"dirty": {"solution.cpp", cppDirty},
 	},
@@ -362,12 +366,12 @@ func TestLanguagesCleanAndDirty(t *testing.T) {
 // carry per-file paths — only the dirty file may produce any.
 func TestMultiFilePython(t *testing.T) {
 	m := loadManifest(t)
-	entry, ok := m.Languages["python"]
+	entry, ok := m.Languages["python313"]
 	if !ok {
-		t.Skip("manifest has no python")
+		t.Skip("manifest has no python313")
 	}
-	cleanFixture, _ := fixtureFile(t, "python", "clean")
-	dirtyFixture, _ := fixtureFile(t, "python", "dirty")
+	cleanFixture, _ := fixtureFile(t, "python313", "clean")
+	dirtyFixture, _ := fixtureFile(t, "python313", "dirty")
 	mounts := map[string]string{
 		cleanFixture: "clean.py",
 		dirtyFixture: "dirty.py",
@@ -376,7 +380,7 @@ func TestMultiFilePython(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	r := checkReport(t, stdout, "python")
+	r := checkReport(t, stdout, "python313")
 	if len(r.Findings) == 0 {
 		t.Fatal("multi-file lint produced no findings")
 	}
@@ -399,9 +403,9 @@ func TestUnknownLanguageFails(t *testing.T) {
 
 func TestMissingFileFails(t *testing.T) {
 	m := loadManifest(t)
-	entry, ok := m.Languages["python"]
+	entry, ok := m.Languages["python313"]
 	if !ok {
-		t.Skip("manifest has no python")
+		t.Skip("manifest has no python313")
 	}
 	args := append([]string{"run", "--rm", "-w", "/workspace", image()}, entry.Command...)
 	args = append(args, "no-such-file.py")
