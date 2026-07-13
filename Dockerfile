@@ -23,6 +23,9 @@ ARG PYLINT_VERSION=3.3.*
 LABEL org.opencontainers.image.source="https://github.com/zinc-sig/linter" \
       org.opencontainers.image.description="Multi-language linter image (pylint, checkstyle, clang-tidy, go vet) for COBE sandbox lint runs"
 
+# Fail piped RUNs (curl | tar) on the producer side too, not just the consumer.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
@@ -33,9 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     coreutils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir --break-system-packages "pylint==${PYLINT_VERSION}"
-
-RUN curl -fsSL "https://github.com/checkstyle/checkstyle/releases/download/checkstyle-${CHECKSTYLE_VERSION}/checkstyle-${CHECKSTYLE_VERSION}-all.jar" \
+RUN pip3 install --no-cache-dir --break-system-packages "pylint==${PYLINT_VERSION}" \
+    && curl -fsSL "https://github.com/checkstyle/checkstyle/releases/download/checkstyle-${CHECKSTYLE_VERSION}/checkstyle-${CHECKSTYLE_VERSION}-all.jar" \
     -o /opt/checkstyle.jar
 
 COPY checkstyle-config.xml /opt/checkstyle-config.xml
@@ -50,8 +52,6 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # tool and normalizes its output to the unified findings JSON.
 COPY --from=build /out/cobe-lint /usr/local/bin/cobe-lint
 
-RUN mkdir -p /workspace
-
-RUN useradd -m -s /bin/false linter
+RUN mkdir -p /workspace && useradd -m -s /bin/false linter
 
 USER linter
