@@ -6,9 +6,6 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
-  # Monthly rebuild so apt security patches land in `latest` without a commit.
-  schedule:
-    - cron: "17 4 3 * *"
 
 # Serialize builds per ref so two rapid main pushes cannot both read the same
 # latest tag and mint the same next version.
@@ -24,8 +21,8 @@ jobs:
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
-          # DL3008: apt package pinning — base image pin + monthly rebuilds
-          # cover reproducibility; exact apt pins churn too fast on Debian.
+          # DL3008: apt package pinning — the base image pin covers
+          # reproducibility; exact apt pins churn too fast on Debian.
           ignore: DL3008
 
   test:
@@ -62,9 +59,7 @@ jobs:
       # create the tag via the API, and publish the image under it in THIS run.
       # A GITHUB_TOKEN-created tag never triggers workflows, so the version
       # build cannot be event-chained through the tags trigger — that trigger
-      # still serves manually pushed tags (semver rules below). Scheduled
-      # rebuilds skip this step: they refresh latest/sha-* without minting a
-      # version, keeping published versions immutable.
+      # still serves manually pushed tags (semver rules below).
       - name: Bump patch version and tag
         id: version
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -137,7 +132,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          # Scheduled rebuilds must not reuse cached apt layers — a cache hit
-          # on `apt-get update && install` would defeat the security refresh.
-          no-cache: ${{ github.event_name == 'schedule' }}
           cache-to: type=gha,mode=max
