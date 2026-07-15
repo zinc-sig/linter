@@ -1,42 +1,69 @@
 package python312
 
-// Inline fixtures: real pylint output captured by running
-// /opt/python/3.12.13/bin/pylint in the image (workdir /workspace); the
-// *ExitCode consts are the recorded exit statuses of those runs.
+// Inline fixtures: real ruff 0.15.21 output captured by running
+// /usr/local/bin/ruff check --no-cache --output-format=json
+// --target-version py312 in the image (workdir /workspace); the *ExitCode
+// consts are the recorded exit statuses of those runs.
 
 const cleanExitCode = 0
 
-const cleanStdout = `[]
-`
+const cleanStdout = `[]`
 
-const dirtyExitCode = 4
+const dirtyExitCode = 1
 
 const dirtyStdout = `[
-    {
-        "type": "warning",
-        "module": "solution",
-        "obj": "main",
-        "line": 5,
-        "column": 4,
-        "endLine": 5,
-        "endColumn": 10,
-        "path": "solution.py",
-        "symbol": "unused-variable",
-        "message": "Unused variable 'unused'",
-        "message-id": "W0612"
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 1
     },
-    {
-        "type": "warning",
-        "module": "solution",
-        "obj": "",
-        "line": 1,
-        "column": 0,
-        "endLine": 1,
-        "endColumn": 9,
-        "path": "solution.py",
-        "symbol": "unused-import",
-        "message": "Unused import os",
-        "message-id": "W0611"
-    }
-]
-`
+    "filename": "/workspace/solution.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 2
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Remove unused import: ` + "`os`" + `"
+    },
+    "location": {
+      "column": 8,
+      "row": 1
+    },
+    "message": "` + "`os`" + ` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 25,
+      "row": 5
+    },
+    "filename": "/workspace/solution.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 5
+    },
+    "message": "Undefined name ` + "`undefined_name`" + `",
+    "name": "undefined-name",
+    "noqa_row": 5,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  }
+]`

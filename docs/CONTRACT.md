@@ -50,15 +50,15 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 {
   "version": 1,
   "language": "python313",
-  "tool": "pylint 3.3.9",
+  "tool": "ruff 0.15.21",
   "findings": [
     {
       "path": "solution.py",
       "line": 3,
-      "column": 1,
+      "column": 8,
       "severity": "warning",
-      "rule": "W0611",
-      "message": "Unused import os"
+      "rule": "F401",
+      "message": "`os` imported but unused"
     }
   ]
 }
@@ -75,10 +75,11 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
   - `column` (int, optional): 1-based column; `0`/absent when unknown.
   - `severity` (string, required): one of `error`, `warning`, `convention`,
     `refactor`, `info`. Tool-native categories are mapped by the language
-    implementation (e.g. pylint `E`/`F`→`error`, `W`→`warning`,
-    `C`→`convention`, `R`→`refactor`; checkstyle `error`→`error`,
-    `warning`→`warning`, `info`→`info`).
-  - `rule` (string, optional): tool-native rule/check id (e.g. `W0611`,
+    implementation (e.g. ruff: syntax errors and undefined names
+    (`F821`-`F823`)→`error`, other pyflakes `F` and pycodestyle
+    `W`→`warning`, pycodestyle `E`→`convention`; checkstyle
+    `error`→`error`, `warning`→`warning`, `info`→`info`).
+  - `rule` (string, optional): tool-native rule/check id (e.g. `F401`,
     `AvoidStarImport`, `clang-analyzer-core.NullDereference`).
   - `message` (string, required): human-readable description.
 
@@ -93,7 +94,7 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
   lint-execution error, not as findings.
 - Where the boundary sits follows the native tool: a Java source Checkstyle
   cannot parse at all makes it crash without a report (non-zero), while a
-  Python syntax error is an ordinary pylint `E0001` finding (exit `0`).
+  Python syntax error is an ordinary ruff `invalid-syntax` finding (exit `0`).
 
 ## 4. Invocation environment
 

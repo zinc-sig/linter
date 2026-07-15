@@ -21,15 +21,15 @@ is the authoritative spec.
 
 | Toolchain | Version | Native invocation (run by `cobe-lint`) |
 |---|---|---|
-| Pylint (per interpreter) | `PylintVersion` (3.3.*, shared by the python packages) | `/opt/python/<version>/bin/pylint --output-format=json --disable=C0114,C0115,C0116 <files>` |
-| CPython (python312, python313) | `python<NN>.PythonVersion` consts, installed by a pinned [uv](https://github.com/astral-sh/uv) | interpreters under `/opt/python-interpreters`, one pylint venv per pin at `/opt/python/<version>` |
+| Ruff (python312, python313) | `ruff.Version` (0.15.21, one native binary shared by the python packages, installed by a pinned [uv](https://github.com/astral-sh/uv)) | `/usr/local/bin/ruff check --no-cache --output-format=json --target-version py<NN> <files>` |
 | Checkstyle | `java.CheckstyleVersion` (10.21.1, on a jlink'ed minimal Java 21 runtime) | `/opt/java/bin/java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
 | Clang-Tidy (c, cpp11, cpp14) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
 | Go | `golang.GoVersion` (1.24.0) | `go vet <files>` |
 
 Each pin lives as an exported const in its `languages/<lang>` package — a
 one-line diff to bump — and the Dockerfile build stage bakes them into the
-install steps via `cmd/toolversions`.
+install steps via `cmd/toolversions`. (The shared ruff pin lives once in
+`languages/internal/ruff` and is re-exported by each python package.)
 
 ## Language versions
 
@@ -38,17 +38,23 @@ toolchain bump cannot silently move it:
 
 | Language | Linted as | Determined by |
 |---|---|---|
-| python312 | Python 3.12.13 | pinned via `python312.PythonVersion` (uv standalone build) |
-| python313 | Python 3.13.14 | pinned via `python313.PythonVersion` (uv standalone build) |
+| python312 | Python 3.12 | ruff `--target-version py312`, baked into the language's `Command` |
+| python313 | Python 3.13 | ruff `--target-version py313`, baked into the language's `Command` |
 | java | Java syntax up to 21 | `java.CheckstyleVersion` grammar, on OpenJDK 21 (`default-jre-headless`) |
 | c | `-std=gnu17` | `c.CStandard` (pins clang 19's probed default) |
 | cpp11 | `-std=gnu++11` | `cpp11.CppStandard` (GNU dialect, matching the gnu17 precedent) |
 | cpp14 | `-std=gnu++14` | `cpp14.CppStandard` (GNU dialect, matching the gnu17 precedent) |
 | go | Go 1.24 | `golang.GoVersion` toolchain's typechecker |
 
+Python versions stay decoupled from the base image, and more simply than
+before: no interpreter ships at all. One pinned ruff binary lints every
+Python line, so adding e.g. python314 is a new package passing
+`--target-version py314` — no interpreter or virtualenv install behind it.
+
 ## Key paths
 
 - `/usr/local/bin/cobe-lint` — the unified CLI (the only path core hardcodes)
+- `/usr/local/bin/ruff` — the shared ruff binary behind the python languages
 - `/opt/checkstyle.jar`, `/opt/checkstyle-config.xml` — Checkstyle JAR and
   configuration (based on Google's Java Style Guide)
 - `/opt/java` — jlink'ed minimal Java runtime that runs checkstyle

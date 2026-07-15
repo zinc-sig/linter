@@ -20,7 +20,7 @@ func TestMetadata(t *testing.T) {
 
 func TestCommand(t *testing.T) {
 	got := New().Command([]string{"a.py", "b.py"})
-	want := []string{"/opt/python/" + PythonVersion + "/bin/pylint", "--output-format=json", "--disable=C0114,C0115,C0116", "a.py", "b.py"}
+	want := []string{"/usr/local/bin/ruff", "check", "--no-cache", "--output-format=json", "--target-version", "py313", "a.py", "b.py"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
 	}
@@ -36,16 +36,18 @@ func TestParseDirty(t *testing.T) {
 	}
 	got := report.Findings[0]
 	want := linter.Finding{
-		Path: "solution.py", Line: 5, Column: 5, // pylint column 4, 0-based
-		Severity: linter.SeverityWarning, Rule: "W0612", Message: "Unused variable 'unused'",
+		// ruff reports absolute paths; linter.Run normalizes them back to
+		// the invocation paths after Parse.
+		Path: "/workspace/solution.py", Line: 1, Column: 8,
+		Severity: linter.SeverityWarning, Rule: "F401", Message: "`os` imported but unused",
 	}
 	if got != want {
 		t.Errorf("finding[0] = %+v, want %+v", got, want)
 	}
-	if f := report.Findings[1]; f.Rule != "W0611" || f.Line != 1 || f.Column != 1 {
-		t.Errorf("finding[1] = %+v, want W0611 at 1:1 (pylint column 0 maps to 1)", f)
+	if f := report.Findings[1]; f.Rule != "F821" || f.Severity != linter.SeverityError || f.Line != 5 || f.Column != 11 {
+		t.Errorf("finding[1] = %+v, want F821/error at 5:11 (undefined names surface to students)", f)
 	}
-	if !strings.HasPrefix(report.Tool, "pylint") {
+	if !strings.HasPrefix(report.Tool, "ruff") {
 		t.Errorf("tool = %q", report.Tool)
 	}
 	if report.Version != 1 || report.Language != "python313" {
@@ -63,26 +65,28 @@ func TestParseClean(t *testing.T) {
 	}
 }
 
-// A Python syntax error makes pylint exit with the error bit set, but the
-// E0001 message is still valid JSON — a finding, not a failure.
+// A Python syntax error makes ruff exit 1, but the invalid-syntax
+// diagnostics are still valid JSON — findings, not a failure.
 func TestParseSyntaxErrorIsFinding(t *testing.T) {
 	report, err := New().Parse([]byte(syntaxErrorStdout), nil, syntaxErrorExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if len(report.Findings) != 1 {
+	if len(report.Findings) != 2 {
 		t.Fatalf("findings = %+v", report.Findings)
 	}
-	if f := report.Findings[0]; f.Severity != linter.SeverityError || f.Rule != "E0001" {
-		t.Errorf("finding = %+v, want E0001/error", f)
+	for i, f := range report.Findings {
+		if f.Severity != linter.SeverityError || f.Rule != "invalid-syntax" {
+			t.Errorf("finding %d = %+v, want invalid-syntax/error", i, f)
+		}
 	}
 }
 
-// Exit bit 32 is a pylint usage error: an operational failure.
+// Exit 2 is a ruff usage/internal error: an operational failure.
 func TestParseUsageError(t *testing.T) {
 	if _, err := New().Parse(nil, []byte(usageErrorStderr), usageErrorExitCode); err == nil {
-		t.Fatal("Parse must fail on the usage-error bit")
-	} else if !strings.Contains(err.Error(), "usage error") {
+		t.Fatal("Parse must fail on exit 2")
+	} else if !strings.Contains(err.Error(), "exit 2") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -96,8 +100,8 @@ func TestParseMultiFile(t *testing.T) {
 		t.Fatal("no findings")
 	}
 	for _, f := range report.Findings {
-		if f.Path != "dirty.py" {
-			t.Errorf("finding path = %q, want dirty.py only", f.Path)
+		if f.Path != "/workspace/dirty.py" {
+			t.Errorf("finding path = %q, want /workspace/dirty.py only", f.Path)
 		}
 	}
 }
@@ -110,28 +114,35 @@ func TestParseGarbage(t *testing.T) {
 
 func TestSeverityMapping(t *testing.T) {
 	stdout := []byte(`[
-		{"message-id": "E0602", "type": "error"},
-		{"message-id": "F0010", "type": "fatal"},
-		{"message-id": "W0611", "type": "warning"},
-		{"message-id": "C0301", "type": "convention"},
-		{"message-id": "R0914", "type": "refactor"},
-		{"message-id": "I0011", "type": "info"},
-		{"message-id": "", "type": "refactor"},
-		{"message-id": "X9999", "type": ""}
+		{"code": null, "message": "syntax error (older ruff releases)"},
+		{"code": "invalid-syntax", "message": "syntax error"},
+		{"code": "E999", "message": "syntax error (historic code)"},
+		{"code": "F821", "message": "undefined name"},
+		{"code": "F822", "message": "undefined export"},
+		{"code": "F823", "message": "undefined local"},
+		{"code": "F401", "message": "unused import"},
+		{"code": "E701", "message": "multiple statements on one line"},
+		{"code": "W605", "message": "invalid escape sequence"},
+		{"code": "C901", "message": "too complex (not in the default rules)"}
 	]`)
-	report, err := New().Parse(stdout, nil, 0)
+	report, err := New().Parse(stdout, nil, 1)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	want := []string{
-		linter.SeverityError, linter.SeverityError, linter.SeverityWarning,
-		linter.SeverityConvention, linter.SeverityRefactor, linter.SeverityInfo,
-		linter.SeverityRefactor, // falls back to the "type" field
-		linter.SeverityWarning,  // unknown everything defaults to warning
+		linter.SeverityError, linter.SeverityError, linter.SeverityError,
+		linter.SeverityError, linter.SeverityError, linter.SeverityError,
+		linter.SeverityWarning,    // other F*: pyflakes code smells
+		linter.SeverityConvention, // other E*: pycodestyle style errors
+		linter.SeverityWarning,    // W*: pycodestyle warnings
+		linter.SeverityWarning,    // unknown codes default to warning
+	}
+	if len(report.Findings) != len(want) {
+		t.Fatalf("findings = %d, want %d", len(report.Findings), len(want))
 	}
 	for i, f := range report.Findings {
 		if f.Severity != want[i] {
-			t.Errorf("finding %d severity = %q, want %q", i, f.Severity, want[i])
+			t.Errorf("finding %d (%s) severity = %q, want %q", i, f.Rule, f.Severity, want[i])
 		}
 	}
 }

@@ -144,7 +144,7 @@ if __name__ == "__main__":
     main()
 `
 
-// unused import and unused variable -> pylint W0611 + W0612
+// unused import and unused variable -> ruff F401 + F841
 const pythonDirty = `import os
 
 

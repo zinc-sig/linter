@@ -20,7 +20,7 @@ func TestMetadata(t *testing.T) {
 
 func TestCommand(t *testing.T) {
 	got := New().Command([]string{"a.py", "b.py"})
-	want := []string{"/opt/python/" + PythonVersion + "/bin/pylint", "--output-format=json", "--disable=C0114,C0115,C0116", "a.py", "b.py"}
+	want := []string{"/usr/local/bin/ruff", "check", "--no-cache", "--output-format=json", "--target-version", "py312", "a.py", "b.py"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
 	}
@@ -36,13 +36,18 @@ func TestParseDirty(t *testing.T) {
 	}
 	got := report.Findings[0]
 	want := linter.Finding{
-		Path: "solution.py", Line: 5, Column: 5, // pylint column 4, 0-based
-		Severity: linter.SeverityWarning, Rule: "W0612", Message: "Unused variable 'unused'",
+		// ruff reports absolute paths; linter.Run normalizes them back to
+		// the invocation paths after Parse.
+		Path: "/workspace/solution.py", Line: 1, Column: 8,
+		Severity: linter.SeverityWarning, Rule: "F401", Message: "`os` imported but unused",
 	}
 	if got != want {
 		t.Errorf("finding[0] = %+v, want %+v", got, want)
 	}
-	if !strings.HasPrefix(report.Tool, "pylint") {
+	if f := report.Findings[1]; f.Rule != "F821" || f.Severity != linter.SeverityError {
+		t.Errorf("finding[1] = %+v, want F821/error (undefined names surface to students)", f)
+	}
+	if !strings.HasPrefix(report.Tool, "ruff") {
 		t.Errorf("tool = %q", report.Tool)
 	}
 	if report.Version != 1 || report.Language != "python312" {

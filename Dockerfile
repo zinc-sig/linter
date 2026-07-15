@@ -49,64 +49,43 @@ RUN jdeps --print-module-deps --ignore-missing-deps --multi-release 21 /checksty
     --strip-debug --no-header-files --no-man-pages --compress=zip-6 \
     --output /jlinked
 
-# --- pythons stage: uv-managed CPython interpreters + pylint virtualenvs -----
-# Runs in its own stage so the uv binary and any install scratch never
-# reach the final image; only the two /opt trees are copied onward.
-FROM debian:13-slim AS pythons
+# --- ruff stage: pinned ruff binary for the python<NN> languages -------------
+# Runs in its own stage so uv, its install scratch, and the tool venv never
+# reach the final image; only the single ruff binary is copied onward.
+FROM debian:13-slim AS ruff
 
-# uv installs the pinned CPython interpreters below. Copied from the
-# official image — pinned by tag, never `latest`, for reproducibility —
-# whose multi-arch manifest covers both amd64 and arm64 builds without a
-# curl|sh bootstrap.
+# uv installs the pinned ruff below. Copied from the official image —
+# pinned by tag, never `latest`, for reproducibility — whose multi-arch
+# manifest covers both amd64 and arm64 builds without a curl|sh bootstrap;
+# uv resolves the matching ruff wheel per build platform.
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /usr/local/bin/uv
 
-# Managed interpreters must live outside /root (0700) so the non-root
-# linter user can reach them; no download cache is kept.
-ENV UV_PYTHON_INSTALL_DIR=/opt/python-interpreters \
-    UV_NO_CACHE=1
+# ruff itself is a native binary with no Python dependency; the throwaway
+# interpreter uv auto-installs only assembles the tool venv and stays in
+# this stage. Everything lands under /opt (not uv's /root defaults) so the
+# copy below has a stable source; no download cache is kept.
+ENV UV_NO_CACHE=1 \
+    UV_PYTHON_INSTALL_DIR=/opt/python-scratch \
+    UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/opt/uv-bin
 
 COPY --from=build /out/tool-versions.sh /opt/tool-versions.sh
 
-# One interpreter + pylint virtualenv per python<NN> language pin, at the
-# stable /opt/python/<version> paths that languages/internal/pylint
-# derives; afterwards, strip payload pylint never touches — tcl/tk and
-# tkinter, IDLE, turtledemo, ensurepip, pydoc data, C headers, and the
-# interpreters' bundled pip (the virtualenvs are isolated from it).
-# SC2086: ${PYTHON_VERSIONS} is a space-separated list — splitting is the
-# point.
-# hadolint ignore=SC1091,SC2086
+# hadolint ignore=SC1091
 RUN . /opt/tool-versions.sh \
-    && for ver in ${PYTHON_VERSIONS}; do \
-    uv python install "${ver}" \
-    && uv venv --python "${ver}" "/opt/python/${ver}" \
-    && uv pip install --python "/opt/python/${ver}/bin/python" "pylint==${PYLINT_VERSION}" \
-    || exit 1; \
-    done \
-    && for lib in /opt/python-interpreters/cpython-*/lib; do \
-    rm -rf "${lib}"/libtcl* "${lib}"/libtk* "${lib}"/tcl* "${lib}"/tk* \
-    "${lib}"/itcl* "${lib}"/thread* "${lib}"/Tix* \
-    "${lib}"/python3.*/idlelib "${lib}"/python3.*/turtledemo \
-    "${lib}"/python3.*/tkinter "${lib}"/python3.*/ensurepip \
-    "${lib}"/python3.*/pydoc_data "${lib}"/python3.*/test \
-    "${lib}"/python3.*/site-packages "${lib}"/python3.*/lib-dynload/_tkinter*.so \
-    || exit 1; \
-    done \
-    && rm -rf /opt/python-interpreters/cpython-*/share \
-    /opt/python-interpreters/cpython-*/include \
-    /opt/python-interpreters/cpython-*/bin/pip* \
-    /opt/python-interpreters/cpython-*/bin/idle* \
-    /opt/python-interpreters/cpython-*/bin/pydoc*
+    && uv tool install "ruff==${RUFF_VERSION}"
 
 # --- runtime stage -----------------------------------------------------------
 # Pinned to the Debian 13 (trixie) slim variant rather than the floating
 # `stable-slim` tag so a Debian major release can't silently change the
-# clang-tidy toolchain. Python deliberately does NOT come from Debian (the
-# python<NN> language packages pin exact CPython releases) and neither does
-# Java (the jre stage jlinks a minimal runtime for checkstyle).
+# clang-tidy toolchain. No Python interpreter ships at all — ruff is a
+# native binary and each python<NN> package selects its dialect via
+# --target-version — and Java doesn't come from Debian either (the jre
+# stage jlinks a minimal runtime for checkstyle).
 FROM debian:13-slim
 
 LABEL org.opencontainers.image.source="https://github.com/zinc-sig/linter" \
-      org.opencontainers.image.description="Multi-language linter image (pylint, checkstyle, clang-tidy, go vet) for COBE sandbox lint runs"
+      org.opencontainers.image.description="Multi-language linter image (ruff, checkstyle, clang-tidy, go vet) for COBE sandbox lint runs"
 
 # Fail piped RUNs (curl | tar) on the producer side too, not just the consumer.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -135,11 +114,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=jre /jlinked /opt/java
 COPY --from=fetch /out/checkstyle.jar /opt/checkstyle.jar
 
-# Pinned CPython interpreters and per-version pylint virtualenvs, built and
-# stripped in the pythons stage; everything is baked at build time, so lint
-# runs stay offline.
-COPY --from=pythons /opt/python-interpreters /opt/python-interpreters
-COPY --from=pythons /opt/python /opt/python
+# The pinned ruff binary — a self-contained native executable (the tool
+# venv it was installed into stays behind in the ruff stage) — at the
+# stable path languages/internal/ruff references.
+COPY --from=ruff /opt/uv-tools/ruff/bin/ruff /usr/local/bin/ruff
 
 COPY checkstyle-config.xml /opt/checkstyle-config.xml
 

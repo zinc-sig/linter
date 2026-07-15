@@ -155,12 +155,13 @@ Tools that come from Debian's repositories (like clang-tidy) skip this step
 entirely — the base-image pin determines their version; say so in the
 package doc instead.
 
-Interpreter-backed languages follow a third pattern: the python<NN>
-packages each pin an exact interpreter release (`PythonVersion`) alongside
-the shared tool pin, `cmd/toolversions` exports the list, and the
-Dockerfile installs one uv-managed interpreter plus tool virtualenv per pin
-at `/opt/python/<version>` — `Command()` derives the executable path from
-the const (see `languages/internal/pylint`).
+Languages sharing one tool follow a third pattern: the python<NN> packages
+all delegate to `languages/internal/ruff`, which pins the single ruff
+release once (each package re-exports it as `RuffVersion` for
+`cmd/toolversions`, since `internal` is out of cmd's import range), and
+each package selects its Python dialect purely via ruff's
+`--target-version` flag in `Command()` — one native binary, no per-version
+interpreters or virtualenvs to install.
 
 ## 3. Install the tool in the Dockerfile
 

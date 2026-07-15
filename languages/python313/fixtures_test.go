@@ -1,99 +1,198 @@
 package python313
 
-// Inline fixtures: real native pylint output captured by running the tool in
-// the image (workdir /workspace); the *ExitCode consts are the recorded
-// exit statuses of those runs.
+// Inline fixtures: real ruff 0.15.21 output captured by running
+// /usr/local/bin/ruff check --no-cache --output-format=json
+// --target-version py313 in the image (workdir /workspace); the *ExitCode
+// consts are the recorded exit statuses of those runs.
 
 const cleanExitCode = 0
 
-const cleanStdout = `[]
-`
+const cleanStdout = `[]`
 
-const dirtyExitCode = 4
+const dirtyExitCode = 1
 
 const dirtyStdout = `[
-    {
-        "type": "warning",
-        "module": "solution",
-        "obj": "main",
-        "line": 5,
-        "column": 4,
-        "endLine": 5,
-        "endColumn": 10,
-        "path": "solution.py",
-        "symbol": "unused-variable",
-        "message": "Unused variable 'unused'",
-        "message-id": "W0612"
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 1
     },
-    {
-        "type": "warning",
-        "module": "solution",
-        "obj": "",
-        "line": 1,
-        "column": 0,
-        "endLine": 1,
-        "endColumn": 9,
-        "path": "solution.py",
-        "symbol": "unused-import",
-        "message": "Unused import os",
-        "message-id": "W0611"
-    }
-]
-`
+    "filename": "/workspace/solution.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 2
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Remove unused import: ` + "`os`" + `"
+    },
+    "location": {
+      "column": 8,
+      "row": 1
+    },
+    "message": "` + "`os`" + ` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 25,
+      "row": 5
+    },
+    "filename": "/workspace/solution.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 5
+    },
+    "message": "Undefined name ` + "`undefined_name`" + `",
+    "name": "undefined-name",
+    "noqa_row": 5,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  }
+]`
 
-const multifileExitCode = 4
+const multifileExitCode = 1
 
 const multifileStdout = `[
-    {
-        "type": "warning",
-        "module": "dirty",
-        "obj": "main",
-        "line": 5,
-        "column": 4,
-        "endLine": 5,
-        "endColumn": 10,
-        "path": "dirty.py",
-        "symbol": "unused-variable",
-        "message": "Unused variable 'unused'",
-        "message-id": "W0612"
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 1
     },
-    {
-        "type": "warning",
-        "module": "dirty",
-        "obj": "",
-        "line": 1,
-        "column": 0,
-        "endLine": 1,
-        "endColumn": 9,
-        "path": "dirty.py",
-        "symbol": "unused-import",
-        "message": "Unused import os",
-        "message-id": "W0611"
-    }
-]
-`
+    "filename": "/workspace/dirty.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 2
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Remove unused import: ` + "`os`" + `"
+    },
+    "location": {
+      "column": 8,
+      "row": 1
+    },
+    "message": "` + "`os`" + ` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 11,
+      "row": 5
+    },
+    "filename": "/workspace/dirty.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 6
+          },
+          "location": {
+            "column": 1,
+            "row": 5
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable ` + "`unused`" + `"
+    },
+    "location": {
+      "column": 5,
+      "row": 5
+    },
+    "message": "Local variable ` + "`unused`" + ` is assigned to but never used",
+    "name": "unused-variable",
+    "noqa_row": 5,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  }
+]`
 
-const syntaxErrorExitCode = 2
+const syntaxErrorExitCode = 1
 
 const syntaxErrorStdout = `[
-    {
-        "type": "error",
-        "module": "solution",
-        "obj": "",
-        "line": 1,
-        "column": 12,
-        "endLine": null,
-        "endColumn": null,
-        "path": "solution.py",
-        "symbol": "syntax-error",
-        "message": "Parsing failed: 'invalid syntax (solution, line 1)'",
-        "message-id": "E0001"
-    }
-]
-`
+  {
+    "cell": null,
+    "code": "invalid-syntax",
+    "end_location": {
+      "column": 11,
+      "row": 1
+    },
+    "filename": "/workspace/solution.py",
+    "fix": null,
+    "location": {
+      "column": 10,
+      "row": 1
+    },
+    "message": "Expected a parameter or the end of the parameter list",
+    "name": "invalid-syntax",
+    "noqa_row": null,
+    "severity": "error",
+    "url": null
+  },
+  {
+    "cell": null,
+    "code": "invalid-syntax",
+    "end_location": {
+      "column": 1,
+      "row": 2
+    },
+    "filename": "/workspace/solution.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 1
+    },
+    "message": "Expected ` + "`)`" + `, found newline",
+    "name": "invalid-syntax",
+    "noqa_row": null,
+    "severity": "error",
+    "url": null
+  }
+]`
 
-const usageErrorExitCode = 32
+const usageErrorExitCode = 2
 
-const usageErrorStderr = `usage: pylint [options]
-pylint: error: Unrecognized option found: no-such-flag
+const usageErrorStderr = `error: unexpected argument '--no-such-flag' found
+
+  tip: a similar argument exists: '--no-show-fixes'
+
+Usage: ruff check --no-cache --output-format <OUTPUT_FORMAT> [FILES]...
+
+For more information, try '--help'.
 `

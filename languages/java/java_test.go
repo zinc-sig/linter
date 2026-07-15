@@ -62,7 +62,7 @@ func TestParseClean(t *testing.T) {
 }
 
 // Checkstyle throws (exit 254, no XML) on Java it cannot parse — an
-// operational failure, unlike pylint which reports syntax errors as data.
+// operational failure, unlike ruff which reports syntax errors as data.
 func TestParseCrashIsOperationalFailure(t *testing.T) {
 	_, err := New().Parse(nil, []byte(crashStderr), crashExitCode)
 	if err == nil {
