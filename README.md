@@ -72,12 +72,16 @@ complete worked example (shellcheck).
 | Tag | Meaning |
 |---|---|
 | `latest` | most recent build of `main` (also refreshed by the monthly scheduled rebuild) |
-| `X.Y.Z`, `X.Y`, `X` | pushed on git tags `vX.Y.Z` — pin these in production config |
+| `X.Y.Z` | minted automatically on every push to `main` (patch bump of the latest `vX.Y.Z` git tag) — pin these in production config |
+| `X.Y`, `X` | published alongside manually pushed git tags `vX.Y.Z` |
 | `sha-<commit>` | every non-PR build, for traceability |
 
 CI (`.github/workflows/publish.yml`) lints the Dockerfile, runs the unit and
 conformance tests against a freshly built image, and publishes multi-arch
-(amd64/arm64) images on pushes, tags, and a monthly no-cache rebuild.
+(amd64/arm64) images on pushes, tags, and a monthly no-cache rebuild. Every
+`main` push also creates the next `vX.Y.Z` git tag itself, so versions need no
+manual tagging; the monthly rebuild refreshes only `latest`/`sha-*` and never
+re-publishes a version.
 
 ## Local build & test
 

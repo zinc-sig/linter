@@ -10,6 +10,12 @@ on:
   schedule:
     - cron: "17 4 3 * *"
 
+# Serialize builds per ref so two rapid main pushes cannot both read the same
+# latest tag and mint the same next version.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -47,10 +53,54 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test]
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      # Auto-release on every push to main: bump the latest vX.Y.Z tag's patch,
+      # create the tag via the API, and publish the image under it in THIS run.
+      # A GITHUB_TOKEN-created tag never triggers workflows, so the version
+      # build cannot be event-chained through the tags trigger — that trigger
+      # still serves manually pushed tags (semver rules below). Scheduled
+      # rebuilds skip this step: they refresh latest/sha-* without minting a
+      # version, keeping published versions immutable.
+      - name: Bump patch version and tag
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: tags } = await github.rest.repos.listTags({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            })
+            let latest = [0, 0, 0]
+            const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+            for (const t of tags) {
+              const m = t.name.match(/^v(\d+)\.(\d+)\.(\d+)$/)
+              if (!m) continue
+              const v = [Number(m[1]), Number(m[2]), Number(m[3])]
+              if (cmp(v, latest) > 0) latest = v
+            }
+            const next = `v${latest[0]}.${latest[1]}.${latest[2] + 1}`
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${next}`,
+                sha: context.sha,
+              })
+              console.log(`Created tag ${next}`)
+            } catch (error) {
+              if (error.status === 422 && error.message.includes('already exists')) {
+                console.log(`Tag ${next} already exists, reusing it`)
+              } else {
+                throw error
+              }
+            }
+            core.setOutput('bare', next.substring(1))
 
       - uses: docker/setup-qemu-action@v3
 
@@ -76,6 +126,7 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
+            type=raw,value=${{ steps.version.outputs.bare || '0.0.0-skipped' }},enable=${{ steps.version.outputs.bare != '' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
