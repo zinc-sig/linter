@@ -41,6 +41,8 @@ func (govet) Command(files []string) []string {
 // cache and a GOPATH even outside any module, and the container may run
 // without a usable $HOME — so both default to /tmp. GOTOOLCHAIN=local pins
 // the baked-in toolchain and GOPROXY=off guarantees no network access.
+// GOMAXPROCS bounds the thread count so concurrent lints stay inside the
+// container's pids limit.
 // Variables already present in the environment take precedence.
 func (govet) Env() []string {
 	return []string{
@@ -48,6 +50,13 @@ func (govet) Env() []string {
 		"GOPATH=/tmp/cobe-gopath",
 		"GOTOOLCHAIN=local",
 		"GOPROXY=off",
+		// GOMAXPROCS caps the threads of the go command AND every subprocess
+		// it spawns (compile, the vet tool — env is inherited): the pinned
+		// toolchain's runtime is not cgroup-aware, so on a many-core host each
+		// subprocess otherwise spins host-core-count threads inside the
+		// container's small CPU quota and pids limit — concurrent lints then
+		// exhaust the pids limit and die with fork/exec EAGAIN.
+		"GOMAXPROCS=2",
 	}
 }
 
