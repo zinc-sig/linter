@@ -106,6 +106,7 @@ func (checkstyle) Parse(stdout, stderr []byte, exitCode int) (linter.Report, err
 		Version:  linter.ReportVersion,
 		Language: "java",
 		Tool:     tool,
+		ToolID:   "checkstyle",
 		Findings: findings,
 	}, nil
 }

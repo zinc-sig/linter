@@ -1,6 +1,12 @@
 # cobe-linter ⇄ core contract (v1)
 
-This document is the single source of truth for the interface between the
+> The authoritative copy of this contract now lives in
+> [zinc-sig/core](https://github.com/zinc-sig/core) at
+> `sdk/lintcontract/CONTRACT.md`, alongside core's wire types, parsers, and
+> golden vectors. This document is kept in sync as the reference
+> implementation's copy.
+
+This document describes the interface between the
 linter image and [zinc-sig/core](https://github.com/zinc-sig/core). Core
 contains **no per-language code**: the set of supported languages, how each
 linter is invoked, and how its output is normalized all live in this image
@@ -67,12 +73,19 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 - `version` (int, required): output-schema version, currently `1`.
 - `language` (string, required): the manifest key that was invoked.
 - `tool` (string, required): freeform tool name + version, for display and
-  debugging.
+  debugging. Consumers must not key behavior on it — use `tool_id`.
+- `tool_id` (string, optional, additive in v1): stable tool identifier
+  (e.g. `ruff`, `checkstyle`, `clang-tidy`, `go vet`) that consumers may
+  key icons/filters/suppressions on. When absent, core falls back to a
+  prefix match of `tool` against known ids.
 - `findings` (array, required, may be empty):
   - `path` (string, required): path as given on the command line
     (workspace-relative).
   - `line` (int, required): 1-based line; `0` when unknown/file-scoped.
   - `column` (int, optional): 1-based column; `0`/absent when unknown.
+  - `end_line`, `end_column` (int, optional, additive in v1): 1-based
+    inclusive end of the flagged range; `0`/absent when unknown, in which
+    case consumers treat the range as collapsed to the start position.
   - `severity` (string, required): one of `error`, `warning`, `convention`,
     `refactor`, `info`. Tool-native categories are mapped by the language
     implementation (e.g. ruff: syntax errors and undefined names

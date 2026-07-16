@@ -62,6 +62,9 @@ func TestParseDirty(t *testing.T) {
 	if !strings.HasPrefix(report.Tool, "go vet") {
 		t.Errorf("tool = %q", report.Tool)
 	}
+	if report.ToolID != "go vet" {
+		t.Errorf("tool_id = %q, want go vet", report.ToolID)
+	}
 	if report.Version != 1 || report.Language != "go" {
 		t.Errorf("header = %d/%q", report.Version, report.Language)
 	}

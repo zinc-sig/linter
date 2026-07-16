@@ -42,6 +42,9 @@ func TestParseDirty(t *testing.T) {
 	if report.Language != "cpp11" {
 		t.Errorf("language = %q", report.Language)
 	}
+	if report.ToolID != "clang-tidy" {
+		t.Errorf("tool_id = %q, want clang-tidy", report.ToolID)
+	}
 }
 
 func TestParseClean(t *testing.T) {

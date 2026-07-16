@@ -92,6 +92,7 @@ func (govet) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
 		Version:  linter.ReportVersion,
 		Language: "go",
 		Tool:     linter.ToolVersion("go vet", `go version (\S+)`, "go", "version"),
+		ToolID:   "go vet",
 		Findings: findings,
 	}, nil
 }

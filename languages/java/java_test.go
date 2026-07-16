@@ -46,6 +46,9 @@ func TestParseDirty(t *testing.T) {
 	if report.Tool != "checkstyle 10.21.1" {
 		t.Errorf("tool = %q, want version from the XML root attribute", report.Tool)
 	}
+	if report.ToolID != "checkstyle" {
+		t.Errorf("tool_id = %q, want checkstyle", report.ToolID)
+	}
 	if report.Version != 1 || report.Language != "java" {
 		t.Errorf("header = %d/%q", report.Version, report.Language)
 	}
