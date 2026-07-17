@@ -89,6 +89,7 @@ func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, erro
 		Version:  linter.ReportVersion,
 		Language: l.language,
 		Tool:     linter.ToolVersion("clang-tidy", `LLVM version (\S+)`, "clang-tidy", "--version"),
+		ToolID:   "clang-tidy",
 		Findings: findings,
 	}, nil
 }

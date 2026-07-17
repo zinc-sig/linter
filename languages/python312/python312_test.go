@@ -39,16 +39,22 @@ func TestParseDirty(t *testing.T) {
 		// ruff reports absolute paths; linter.Run normalizes them back to
 		// the invocation paths after Parse.
 		Path: "/workspace/solution.py", Line: 1, Column: 8,
+		// ruff's end_location column 10 is exclusive; the inclusive end of
+		// the two-character `os` span is column 9.
+		EndLine: 1, EndColumn: 9,
 		Severity: linter.SeverityWarning, Rule: "F401", Message: "`os` imported but unused",
 	}
 	if got != want {
 		t.Errorf("finding[0] = %+v, want %+v", got, want)
 	}
-	if f := report.Findings[1]; f.Rule != "F821" || f.Severity != linter.SeverityError {
-		t.Errorf("finding[1] = %+v, want F821/error (undefined names surface to students)", f)
+	if f := report.Findings[1]; f.Rule != "F821" || f.Severity != linter.SeverityError || f.EndLine != 5 || f.EndColumn != 24 {
+		t.Errorf("finding[1] = %+v, want F821/error ending at 5:24 (undefined names surface to students)", f)
 	}
 	if !strings.HasPrefix(report.Tool, "ruff") {
 		t.Errorf("tool = %q", report.Tool)
+	}
+	if report.ToolID != "ruff" {
+		t.Errorf("tool_id = %q, want ruff", report.ToolID)
 	}
 	if report.Version != 1 || report.Language != "python312" {
 		t.Errorf("header = %d/%q", report.Version, report.Language)

@@ -30,6 +30,11 @@ type diagnostic struct {
 	Message  string   `json:"message"`
 	Filename string   `json:"filename"`
 	Location position `json:"location"`
+	// EndLocation is ruff's end of the flagged range. Its row is 1-based
+	// like Location's, but its column is *exclusive* (one past the last
+	// character), so it is converted to the contract's inclusive end column
+	// in Parse. Absent for findings ruff gives no end for (zero value).
+	EndLocation position `json:"end_location"`
 }
 
 // position is 1-based in ruff's output, matching the contract.
@@ -103,7 +108,7 @@ func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, erro
 		if d.Code != nil {
 			code = *d.Code
 		}
-		findings = append(findings, linter.Finding{
+		f := linter.Finding{
 			// ruff reports absolute paths; linter.Run maps them back to
 			// the paths given on the command line.
 			Path:     d.Filename,
@@ -112,13 +117,23 @@ func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, erro
 			Severity: severity(code),
 			Rule:     code,
 			Message:  d.Message,
-		})
+		}
+		// ruff's end_location column is exclusive; the contract wants a
+		// 1-based inclusive end, so subtract 1 (a single-character span
+		// collapses to EndColumn == Column). Only emit when ruff reports an
+		// end at all — a zero row means absent.
+		if d.EndLocation.Row > 0 {
+			f.EndLine = d.EndLocation.Row
+			f.EndColumn = max(d.EndLocation.Column-1, 0)
+		}
+		findings = append(findings, f)
 	}
 
 	return linter.Report{
 		Version:  linter.ReportVersion,
 		Language: l.language,
 		Tool:     linter.ToolVersion("ruff", `ruff (\S+)`, BinPath, "--version"),
+		ToolID:   "ruff",
 		Findings: findings,
 	}, nil
 }

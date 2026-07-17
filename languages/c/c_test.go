@@ -45,6 +45,9 @@ func TestParseDirtySkipsNotes(t *testing.T) {
 	if !strings.HasPrefix(report.Tool, "clang-tidy") {
 		t.Errorf("tool = %q", report.Tool)
 	}
+	if report.ToolID != "clang-tidy" {
+		t.Errorf("tool_id = %q, want clang-tidy", report.ToolID)
+	}
 	if report.Version != 1 || report.Language != "c" {
 		t.Errorf("header = %d/%q", report.Version, report.Language)
 	}

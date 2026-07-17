@@ -26,6 +26,12 @@ type Finding struct {
 	Line int `json:"line"`
 	// Column is 1-based; omitted when unknown.
 	Column int `json:"column,omitempty"`
+	// EndLine and EndColumn are the 1-based inclusive end of the flagged
+	// range (contract §2, additive in v1); each is omitted when the native
+	// tool does not report it, in which case consumers collapse the range to
+	// the start position.
+	EndLine   int `json:"end_line,omitempty"`
+	EndColumn int `json:"end_column,omitempty"`
 	// Severity is one of the Severity* constants.
 	Severity string `json:"severity"`
 	// Rule is the tool-native rule/check id, when the tool has one.
@@ -36,9 +42,13 @@ type Finding struct {
 
 // Report is the unified JSON document written to stdout (contract §2).
 type Report struct {
-	Version  int       `json:"version"`
-	Language string    `json:"language"`
-	Tool     string    `json:"tool"`
+	Version  int    `json:"version"`
+	Language string `json:"language"`
+	Tool     string `json:"tool"`
+	// ToolID is a stable tool identifier consumers may key behavior on
+	// (contract §2, additive in v1), unlike the freeform version-bearing
+	// Tool. Omitted when the implementation does not set it.
+	ToolID   string    `json:"tool_id,omitempty"`
 	Findings []Finding `json:"findings"`
 }
 
