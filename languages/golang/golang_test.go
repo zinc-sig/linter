@@ -25,7 +25,7 @@ func TestCommand(t *testing.T) {
 
 func TestEnvDefaults(t *testing.T) {
 	env := New().(linter.Enver).Env()
-	for _, key := range []string{"GOCACHE=", "GOPATH=", "GOTOOLCHAIN=local", "GOPROXY=off"} {
+	for _, key := range []string{"GOCACHE=", "GOPATH=", "GOTOOLCHAIN=local", "GOPROXY=off", "GOMAXPROCS=2"} {
 		found := false
 		for _, kv := range env {
 			if strings.HasPrefix(kv, key) {
