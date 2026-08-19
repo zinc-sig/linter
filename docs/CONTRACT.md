@@ -131,10 +131,10 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 
 ## 6. Adding a language
 
-Implement the `linter.Linter` interface (`Language`, `Name`, `Command`,
-`Parse`) in
-a new `languages/<lang>/` package and register it in
-`languages/languages.go` — the manifest, the CLI, and the conformance tests
-all derive from that registry automatically. No filename is involved: the
-workspace filename for the new language is configured on core's side as
-deployment config.
+Add a stanza to `languages/manifest.yaml` binding the new language key and
+display name to a tool driver — when the tool is new to the image, also
+implement the `linter.Linter` interface (`Language`, `Name`, `Command`,
+`Parse`) in a `languages/internal/<tool>/` package. The manifest JSON, the
+CLI, and the conformance tests all derive from that file automatically. No
+filename is involved: the workspace filename for the new language is
+configured on core's side as deployment config.

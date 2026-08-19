@@ -4,11 +4,11 @@
 FROM golang:1.25 AS build
 
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY linter/ linter/
 COPY languages/ languages/
 COPY cmd/ cmd/
-# Toolchain pins live as consts in the languages/<lang> packages;
+# Toolchain pins live in languages/manifest.yaml (embedded into the CLI);
 # cmd/toolversions exports them for the runtime stage's install steps.
 # DL3062 misfires here: ./cmd/toolversions is a local package in this
 # module, not a remote `go install` target one could pin.
@@ -90,8 +90,8 @@ LABEL org.opencontainers.image.source="https://github.com/zinc-sig/linter" \
 # Fail piped RUNs (curl | tar) on the producer side too, not just the consumer.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Version pins generated from the languages/<lang> packages (see
-# cmd/toolversions) — bump a pin by editing the language's const.
+# Version pins generated from languages/manifest.yaml (see
+# cmd/toolversions) — bump a pin by editing the manifest.
 COPY --from=build /out/tool-versions.sh /opt/tool-versions.sh
 
 # Docs, man pages, and locales are dead weight in a headless lint image;

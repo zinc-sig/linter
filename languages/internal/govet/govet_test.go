@@ -1,4 +1,4 @@
-package golang
+package govet
 
 import (
 	"slices"
@@ -8,15 +8,21 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// newTest builds the driver exactly as the go manifest stanza does.
+func newTest() *Linter { return New("go", "Go") }
+
 func TestMetadata(t *testing.T) {
-	l := New()
+	l := newTest()
 	if l.Language() != "go" {
 		t.Errorf("Language = %q", l.Language())
+	}
+	if l.Name() != "Go" {
+		t.Errorf("Name = %q", l.Name())
 	}
 }
 
 func TestCommand(t *testing.T) {
-	got := New().Command([]string{"a.go", "b.go"})
+	got := newTest().Command([]string{"a.go", "b.go"})
 	want := []string{"go", "vet", "a.go", "b.go"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
@@ -24,7 +30,7 @@ func TestCommand(t *testing.T) {
 }
 
 func TestEnvDefaults(t *testing.T) {
-	env := New().(linter.Enver).Env()
+	env := linter.Linter(newTest()).(linter.Enver).Env()
 	for _, key := range []string{"GOCACHE=", "GOPATH=", "GOTOOLCHAIN=local", "GOPROXY=off", "GOMAXPROCS=2"} {
 		found := false
 		for _, kv := range env {
@@ -43,7 +49,7 @@ func TestEnvDefaults(t *testing.T) {
 // diagnostic parsed as a warning with the tool's "./" path kept verbatim
 // (normalization happens in linter.Run).
 func TestParseDirty(t *testing.T) {
-	report, err := New().Parse(nil, []byte(dirtyStderr), dirtyExitCode)
+	report, err := newTest().Parse(nil, []byte(dirtyStderr), dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -71,7 +77,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse(nil, nil, cleanExitCode)
+	report, err := newTest().Parse(nil, nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -83,7 +89,7 @@ func TestParseClean(t *testing.T) {
 // Compile/typecheck failures come prefixed with "vet: " and map to
 // severity error — still data, exit 0 for the CLI.
 func TestParseCompileErrorIsErrorFinding(t *testing.T) {
-	report, err := New().Parse(nil, []byte(compileErrorStderr), compileErrorExitCode)
+	report, err := newTest().Parse(nil, []byte(compileErrorStderr), compileErrorExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -104,13 +110,13 @@ func TestParseCompileErrorIsErrorFinding(t *testing.T) {
 // mixed-package file sets) is an operational failure.
 func TestParseOperationalFailure(t *testing.T) {
 	stderr := []byte("named files must all be in one directory; have a and b\n")
-	if _, err := New().Parse(nil, stderr, 1); err == nil {
+	if _, err := newTest().Parse(nil, stderr, 1); err == nil {
 		t.Fatal("Parse must fail on a non-zero exit without diagnostics")
 	}
 }
 
 func TestParseColumnOptional(t *testing.T) {
-	report, err := New().Parse(nil, []byte("./solution.go:3: file-scoped complaint\n"), 1)
+	report, err := newTest().Parse(nil, []byte("./solution.go:3: file-scoped complaint\n"), 1)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

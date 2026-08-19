@@ -1,8 +1,8 @@
 // Package ruff is the shared ruff runner and JSON parser behind the
-// python<NN> language implementations. One pinned native ruff binary lints
-// every Python language line; each implementation selects its dialect via
-// ruff's --target-version flag, so no per-version interpreters are baked
-// into the image.
+// python<NN> languages. One pinned native ruff binary (release pinned in
+// languages/manifest.yaml) lints every Python language line; each language
+// selects its dialect via ruff's --target-version flag, so no per-version
+// interpreters are baked into the image.
 package ruff
 
 import (
@@ -13,11 +13,9 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
-// Version is the ruff release baked into the image, shared by every
-// python<NN> package; cmd/toolversions feeds it to the Dockerfile build
-// via the packages' RuffVersion re-exports (this internal package is
-// outside cmd's import range).
-const Version = "0.15.21"
+// ToolID is the stable tool identifier stamped into reports (contract
+// §2) and, by construction, the driver id manifest.yaml stanzas select.
+const ToolID = "ruff"
 
 // BinPath is the stable path the Dockerfile installs the ruff binary at.
 const BinPath = "/usr/local/bin/ruff"
@@ -133,7 +131,7 @@ func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, erro
 		Version:  linter.ReportVersion,
 		Language: l.language,
 		Tool:     linter.ToolVersion("ruff", `ruff (\S+)`, BinPath, "--version"),
-		ToolID:   "ruff",
+		ToolID:   ToolID,
 		Findings: findings,
 	}, nil
 }

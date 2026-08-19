@@ -21,35 +21,38 @@ is the authoritative spec.
 
 | Toolchain | Version | Native invocation (run by `cobe-lint`) |
 |---|---|---|
-| Ruff (python312, python313) | `ruff.Version` (0.15.21, one native binary shared by the python packages, installed by a pinned [uv](https://github.com/astral-sh/uv)) | `/usr/local/bin/ruff check --no-cache --output-format=json --target-version py<NN> <files>` |
-| Checkstyle | `java.CheckstyleVersion` (10.21.1, on a jlink'ed minimal Java 21 runtime) | `/opt/java/bin/java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
+| Ruff (python312, python313) | 0.15.21 (one native binary shared by the python languages, installed by a pinned [uv](https://github.com/astral-sh/uv)) | `/usr/local/bin/ruff check --no-cache --output-format=json --target-version py<NN> <files>` |
+| Checkstyle | 10.21.1 (on a jlink'ed minimal Java 21 runtime) | `/opt/java/bin/java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
 | Clang-Tidy (c, cpp11, cpp14) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
-| Go | `golang.GoVersion` (1.24.0) | `go vet <files>` |
+| Go | 1.24.0 | `go vet <files>` |
 
-Each pin lives as an exported const in its `languages/<lang>` package — a
-one-line diff to bump — and the Dockerfile build stage bakes them into the
-install steps via `cmd/toolversions`. (The shared ruff pin lives once in
-`languages/internal/ruff` and is re-exported by each python package.)
+Each pin lives in the `tools:` section of
+[`languages/manifest.yaml`](languages/manifest.yaml) — a one-line diff to
+bump — and the Dockerfile build stage bakes them into the install steps
+via `cmd/toolversions`.
 
 ## Language versions
 
 What language level each linter checks, pinned or probed in the image so a
 toolchain bump cannot silently move it:
 
+Every value below is a field of the language's stanza in
+[`languages/manifest.yaml`](languages/manifest.yaml):
+
 | Language | Linted as | Determined by |
 |---|---|---|
-| python312 | Python 3.12 | ruff `--target-version py312`, baked into the language's `Command` |
-| python313 | Python 3.13 | ruff `--target-version py313`, baked into the language's `Command` |
-| java | Java syntax up to 21 | `java.CheckstyleVersion` grammar, on OpenJDK 21 (`default-jre-headless`) |
-| c | `-std=gnu17` | `c.CStandard` (pins clang 19's probed default) |
-| cpp11 | `-std=gnu++11` | `cpp11.CppStandard` (GNU dialect, matching the gnu17 precedent) |
-| cpp14 | `-std=gnu++14` | `cpp14.CppStandard` (GNU dialect, matching the gnu17 precedent) |
-| go | Go 1.24 | `golang.GoVersion` toolchain's typechecker |
+| python312 | Python 3.12 | `target: py312` (ruff `--target-version`) |
+| python313 | Python 3.13 | `target: py313` (ruff `--target-version`) |
+| java | Java syntax up to 21 | the pinned checkstyle grammar, on a jlink'ed OpenJDK 21 runtime |
+| c | `-std=gnu17` | `std: gnu17` (pins clang 19's probed default) |
+| cpp11 | `-std=gnu++11` | `std: gnu++11` (GNU dialect, matching the gnu17 precedent) |
+| cpp14 | `-std=gnu++14` | `std: gnu++14` (GNU dialect, matching the gnu17 precedent) |
+| go | Go 1.24 | the pinned Go toolchain's typechecker |
 
 Python versions stay decoupled from the base image, and more simply than
 before: no interpreter ships at all. One pinned ruff binary lints every
-Python line, so adding e.g. python314 is a new package passing
-`--target-version py314` — no interpreter or virtualenv install behind it.
+Python line, so adding e.g. python314 is a new stanza with
+`target: py314` — no interpreter or virtualenv install behind it.
 
 ## Key paths
 
@@ -64,14 +67,17 @@ The image runs as the non-root `linter` user.
 
 ## Adding a language (fork guide)
 
-In short: implement `linter.Linter` in `languages/<lang>/` (with an inline-
-fixture `Parse` unit test and a version const), install the tool in the
-[`Dockerfile`](Dockerfile), and register the language in
-[`languages/languages.go`](languages/languages.go) — everything else
-(manifest, CLI, conformance tests) derives from the registry. The workspace
-filename the language lints under is core's deployment config, not this
-repo's. See [`docs/ADDING_A_LANGUAGE.md`](docs/ADDING_A_LANGUAGE.md) for a
-complete worked example (shellcheck).
+In short: add a stanza to
+[`languages/manifest.yaml`](languages/manifest.yaml) — everything else
+(manifest JSON, CLI, conformance tests) derives from that file. When the
+language needs a tool the image doesn't have yet, also implement the
+`linter.Linter` driver in `languages/internal/<tool>/` (with an
+inline-fixture `Parse` unit test), install the tool in the
+[`Dockerfile`](Dockerfile), and pin its release in the manifest's `tools:`
+section. The workspace filename the language lints under is core's
+deployment config, not this repo's. See
+[`docs/ADDING_A_LANGUAGE.md`](docs/ADDING_A_LANGUAGE.md) for a complete
+worked example (shellcheck).
 
 ## Tags
 
@@ -91,7 +97,7 @@ re-published.
 ## Local build & test
 
 ```bash
-go vet ./... && go test ./...     # unit tests (parsers, CLI, registry)
+go vet ./... && go test ./...     # unit tests (parsers, CLI, manifest)
 docker build -t cobe-linter:dev .
 go test -tags conformance ./...   # image conformance (IMAGE=<tag> to override)
 ```

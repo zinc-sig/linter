@@ -2,7 +2,7 @@
 // /usr/local/bin/cobe-lint (docs/CONTRACT.md):
 //
 //	cobe-lint manifest
-//	    print the language-manifest JSON derived from the registry
+//	    print the language-manifest JSON derived from languages/manifest.yaml
 //	cobe-lint lint <language> <file> [<file>...]
 //	    run the native linter and print unified findings JSON
 //
@@ -26,9 +26,6 @@ import (
 // advertise the baked-in location regardless of how the CLI was invoked.
 const binPath = "/usr/local/bin/cobe-lint"
 
-// manifestVersion is the manifest-schema version (contract §1).
-const manifestVersion = 1
-
 // manifestEntry describes one language. The filename a language is staged
 // under inside the workspace is core's deployment config and deliberately
 // not part of the manifest.
@@ -43,7 +40,7 @@ type manifest struct {
 }
 
 func buildManifest(all []linter.Linter) manifest {
-	m := manifest{Version: manifestVersion, Languages: make(map[string]manifestEntry, len(all))}
+	m := manifest{Version: languages.ManifestVersion(), Languages: make(map[string]manifestEntry, len(all))}
 	for _, l := range all {
 		m.Languages[l.Language()] = manifestEntry{
 			Name: l.Name(),

@@ -1,4 +1,4 @@
-package java
+package checkstyle
 
 import (
 	"slices"
@@ -8,15 +8,21 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// newTest builds the driver exactly as the java manifest stanza does.
+func newTest() *Linter { return New("java", "Java") }
+
 func TestMetadata(t *testing.T) {
-	l := New()
+	l := newTest()
 	if l.Language() != "java" {
 		t.Errorf("Language = %q", l.Language())
+	}
+	if l.Name() != "Java" {
+		t.Errorf("Name = %q", l.Name())
 	}
 }
 
 func TestCommand(t *testing.T) {
-	got := New().Command([]string{"A.java", "B.java"})
+	got := newTest().Command([]string{"A.java", "B.java"})
 	want := []string{"/opt/java/bin/java", "-jar", "/opt/checkstyle.jar", "-c", "/opt/checkstyle-config.xml", "-f", "xml", "A.java", "B.java"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
@@ -24,7 +30,7 @@ func TestCommand(t *testing.T) {
 }
 
 func TestParseDirty(t *testing.T) {
-	report, err := New().Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
+	report, err := newTest().Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -55,7 +61,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse([]byte(cleanStdout), nil, cleanExitCode)
+	report, err := newTest().Parse([]byte(cleanStdout), nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -67,7 +73,7 @@ func TestParseClean(t *testing.T) {
 // Checkstyle throws (exit 254, no XML) on Java it cannot parse — an
 // operational failure, unlike ruff which reports syntax errors as data.
 func TestParseCrashIsOperationalFailure(t *testing.T) {
-	_, err := New().Parse(nil, []byte(crashStderr), crashExitCode)
+	_, err := newTest().Parse(nil, []byte(crashStderr), crashExitCode)
 	if err == nil {
 		t.Fatal("Parse must fail when checkstyle emits no XML")
 	}
@@ -86,7 +92,7 @@ func TestSeverityMappingAndOptionalAttrs(t *testing.T) {
 <error line="6" severity="bogus" message="b" source="Lone"/>
 </file>
 </checkstyle>`)
-	report, err := New().Parse(stdout, nil, 0)
+	report, err := newTest().Parse(stdout, nil, 0)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

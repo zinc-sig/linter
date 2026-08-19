@@ -1,0 +1,77 @@
+# The language manifest: the single declarative home of everything about a
+# language that is data rather than code — its stable key, display name,
+# which tool driver lints it, and that driver's per-language options.
+# cobe-lint embeds this file at build time; the manifest JSON served to
+# core (`cobe-lint manifest`, docs/CONTRACT.md §1) and the tool-version
+# pins the Dockerfile installs both derive from it. The tool drivers under
+# languages/internal/ own everything that is code: building the native
+# argv and normalizing the native output.
+#
+# Adding a language whose tool driver already exists is a stanza here —
+# see docs/ADDING_A_LANGUAGE.md for the full worked example. The workspace
+# filename a language lints under is core's deployment config, not this
+# image's.
+
+# Manifest-schema version emitted by `cobe-lint manifest` (contract §1).
+version: 1
+
+# Key = stable language identifier (lowercase, [a-z0-9_+-]+), served
+# verbatim as the manifest map key. Per language:
+#   name    (required)         human-readable display name for UI/API surfaces
+#   tool    (required)         driver id: ruff | clang-tidy | checkstyle | go vet
+#   target  (ruff only)        --target-version dialect, e.g. py313
+#   std     (clang-tidy only)  -std= language standard, e.g. gnu++11
+languages:
+  # gnu17 is clang 19's own default for C (probed in the image via
+  # __STDC_VERSION__ == 201710L with __STRICT_ANSI__ undefined), pinned so
+  # a future toolchain bump cannot silently move the language level.
+  c:
+    name: C
+    tool: clang-tidy
+    std: gnu17
+
+  # The GNU dialects (gnu++NN rather than strict c++NN) match the dialect
+  # choice above — c pins gnu17, following clang's own gnu++NN defaults.
+  cpp11:
+    name: C++11
+    tool: clang-tidy
+    std: gnu++11
+  cpp14:
+    name: C++14
+    tool: clang-tidy
+    std: gnu++14
+
+  go:
+    name: Go
+    tool: go vet
+
+  java:
+    name: Java
+    tool: checkstyle
+
+  # Every python<NN> line shares the image's single pinned ruff binary and
+  # differs only in the dialect ruff checks against — adding e.g. python314
+  # is a stanza with target py314, no interpreter or venv behind it.
+  python312:
+    name: Python 3.12
+    tool: ruff
+    target: py312
+  python313:
+    name: Python 3.13
+    tool: ruff
+    target: py313
+
+# Toolchain install pins, consumed by the Dockerfile build via
+# cmd/toolversions — bump a pin by editing it here. clang-tidy has no pin:
+# Debian 13's repositories determine its release (currently LLVM 19).
+tools:
+  # One native ruff binary behind every python<NN> language, installed by
+  # a pinned uv.
+  ruff: "0.15.21"
+  # Checkstyle's grammar determines the Java language level accepted
+  # (10.21.1 parses source up to Java 21); it runs on the image's
+  # jlink'ed minimal Java 21 runtime.
+  checkstyle: "10.21.1"
+  # Pins both the vet binary and the Go language version its typechecker
+  # assumes for bare files.
+  go: "1.24.0"
