@@ -17,10 +17,13 @@ version: 1
 
 # Key = stable language identifier (lowercase, [a-z0-9_+-]+), served
 # verbatim as the manifest map key. Per language:
-#   name    (required)         human-readable display name for UI/API surfaces
-#   tool    (required)         driver id: ruff | clang-tidy | checkstyle | go vet
-#   target  (ruff only)        --target-version dialect, e.g. py313
-#   std     (clang-tidy only)  -std= language standard, e.g. gnu++11
+#   name  (required)  human-readable display name for UI/API surfaces
+#   tool  (required)  driver id: ruff | clang-tidy | checkstyle | go vet
+#   with  (per tool)  the driver's own options block, validated against
+#                     the driver's schema (ruff: target, the
+#                     --target-version dialect; clang-tidy: std, the
+#                     -std= language standard); drivers without options
+#                     take no block at all
 languages:
   # gnu17 is clang 19's own default for C (probed in the image via
   # __STDC_VERSION__ == 201710L with __STRICT_ANSI__ undefined), pinned so
@@ -28,18 +31,21 @@ languages:
   c:
     name: C
     tool: clang-tidy
-    std: gnu17
+    with:
+      std: gnu17
 
   # The GNU dialects (gnu++NN rather than strict c++NN) match the dialect
   # choice above — c pins gnu17, following clang's own gnu++NN defaults.
   cpp11:
     name: C++11
     tool: clang-tidy
-    std: gnu++11
+    with:
+      std: gnu++11
   cpp14:
     name: C++14
     tool: clang-tidy
-    std: gnu++14
+    with:
+      std: gnu++14
 
   go:
     name: Go
@@ -51,15 +57,18 @@ languages:
 
   # Every python<NN> line shares the image's single pinned ruff binary and
   # differs only in the dialect ruff checks against — adding e.g. python314
-  # is a stanza with target py314, no interpreter or venv behind it.
+  # is a stanza whose with: block sets target py314, no interpreter or
+  # venv behind it.
   python312:
     name: Python 3.12
     tool: ruff
-    target: py312
+    with:
+      target: py312
   python313:
     name: Python 3.13
     tool: ruff
-    target: py313
+    with:
+      target: py313
 
 # Toolchain install pins, consumed by the Dockerfile build via
 # cmd/toolversions — bump a pin by editing it here. clang-tidy has no pin:

@@ -43,12 +43,44 @@ type manifest struct {
 }
 
 // language is one manifest stanza: the display name, the tool driver id,
-// and the driver's options (target for ruff, std for clang-tidy).
+// and the driver-owned with: options block, kept opaque here so each
+// driver arm in build can decode it against its own schema.
 type language struct {
-	Name   string `yaml:"name"`
-	Tool   string `yaml:"tool"`
+	Name string    `yaml:"name"`
+	Tool string    `yaml:"tool"`
+	With yaml.Node `yaml:"with"`
+}
+
+// ruffOptions is the with: block a tool: ruff stanza owns.
+type ruffOptions struct {
+	// Target is the --target-version dialect, e.g. py313.
 	Target string `yaml:"target"`
-	Std    string `yaml:"std"`
+}
+
+// clangtidyOptions is the with: block a tool: clang-tidy stanza owns.
+type clangtidyOptions struct {
+	// Std is the -std= language standard, e.g. gnu++11.
+	Std string `yaml:"std"`
+}
+
+// decodeWith strictly decodes a stanza's with: block into the driver's
+// options struct — an unknown key fails here, so a foreign or misspelled
+// option never reaches a driver. An absent block leaves the zero value
+// for the arm's required-option checks to report.
+func decodeWith(with yaml.Node, out any) error {
+	if with.IsZero() {
+		return nil
+	}
+	raw, err := yaml.Marshal(&with)
+	if err != nil {
+		return fmt.Errorf("with: %w", err)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(out); err != nil {
+		return fmt.Errorf("with: %w", err)
+	}
+	return nil
 }
 
 // keyRE mirrors core's manifest language-key constraint (contract §1).
@@ -68,41 +100,43 @@ var (
 var pinRE = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 
 // build binds one manifest stanza to its tool driver. The driver ids
-// match the tool_id each driver stamps into reports; every driver rejects
-// missing and foreign options, so a manifest typo fails at load, not at
-// lint time.
+// match the tool_id each driver stamps into reports; each arm decodes the
+// with: block against its own options schema, so a missing, foreign, or
+// malformed option fails at load, not at lint time.
 func build(key string, l language) (linter.Linter, error) {
 	switch l.Tool {
 	case ruff.ToolID:
-		if l.Target == "" {
-			return nil, fmt.Errorf("tool ruff requires target (a --target-version dialect such as py313)")
+		var opts ruffOptions
+		if err := decodeWith(l.With, &opts); err != nil {
+			return nil, err
 		}
-		if !targetRE.MatchString(l.Target) {
-			return nil, fmt.Errorf("target %q does not name a ruff dialect (want e.g. py313)", l.Target)
+		if opts.Target == "" {
+			return nil, fmt.Errorf("tool ruff requires with.target (a --target-version dialect such as py313)")
 		}
-		if l.Std != "" {
-			return nil, fmt.Errorf("std is a clang-tidy option, not a ruff one")
+		if !targetRE.MatchString(opts.Target) {
+			return nil, fmt.Errorf("with.target %q does not name a ruff dialect (want e.g. py313)", opts.Target)
 		}
-		return ruff.New(key, l.Name, l.Target), nil
+		return ruff.New(key, l.Name, opts.Target), nil
 	case clangtidy.ToolID:
-		if l.Std == "" {
-			return nil, fmt.Errorf("tool clang-tidy requires std (a -std= language standard such as gnu++11)")
+		var opts clangtidyOptions
+		if err := decodeWith(l.With, &opts); err != nil {
+			return nil, err
 		}
-		if !stdRE.MatchString(l.Std) {
-			return nil, fmt.Errorf("std %q is not a -std= value (want e.g. gnu++11)", l.Std)
+		if opts.Std == "" {
+			return nil, fmt.Errorf("tool clang-tidy requires with.std (a -std= language standard such as gnu++11)")
 		}
-		if l.Target != "" {
-			return nil, fmt.Errorf("target is a ruff option, not a clang-tidy one")
+		if !stdRE.MatchString(opts.Std) {
+			return nil, fmt.Errorf("with.std %q is not a -std= value (want e.g. gnu++11)", opts.Std)
 		}
-		return clangtidy.New(key, l.Name, l.Std), nil
+		return clangtidy.New(key, l.Name, opts.Std), nil
 	case checkstyle.ToolID:
-		if l.Target != "" || l.Std != "" {
-			return nil, fmt.Errorf("tool %q takes no options", l.Tool)
+		if !l.With.IsZero() {
+			return nil, fmt.Errorf("tool %q takes no with: options", l.Tool)
 		}
 		return checkstyle.New(key, l.Name), nil
 	case govet.ToolID:
-		if l.Target != "" || l.Std != "" {
-			return nil, fmt.Errorf("tool %q takes no options", l.Tool)
+		if !l.With.IsZero() {
+			return nil, fmt.Errorf("tool %q takes no with: options", l.Tool)
 		}
 		return govet.New(key, l.Name), nil
 	default:

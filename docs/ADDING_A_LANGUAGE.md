@@ -13,7 +13,8 @@ language is *only* a stanza — e.g. python314 would be:
 python314:
   name: Python 3.14
   tool: ruff
-  target: py314
+  with:
+    target: py314
 ```
 
 plus the language tables in `languages/languages_test.go` (end of step 5)
@@ -58,8 +59,8 @@ answer in their package docs:
 
 Create `languages/internal/shellcheck/shellcheck.go`. A driver is
 parameterized by the manifest language key and display name (plus any
-per-language options it declares — compare ruff's `target` and
-clang-tidy's `std`), so several manifest stanzas can share it:
+per-language options its `with:` block declares — compare ruff's `target`
+and clang-tidy's `std`), so several manifest stanzas can share it:
 
 ```go
 // Package shellcheck is the shellcheck runner and JSON parser behind the
@@ -74,6 +75,10 @@ import (
 
 	"github.com/zinc-sig/linter/linter"
 )
+
+// ToolID is the stable tool identifier stamped into reports (contract
+// §2) and, by construction, the driver id manifest.yaml stanzas select.
+const ToolID = "shellcheck"
 
 // severityByLevel maps shellcheck levels onto the contract enum.
 var severityByLevel = map[string]string{
@@ -146,7 +151,7 @@ func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, erro
 		Version:  linter.ReportVersion,
 		Language: l.language,
 		Tool:     linter.ToolVersion("shellcheck", `version:\s+(\S+)`, "shellcheck", "--version"),
-		ToolID:   "shellcheck",
+		ToolID:   ToolID,
 		Findings: findings,
 	}, nil
 }
@@ -167,20 +172,22 @@ Notes:
 
 Teach the registry's `build` switch in
 [`languages/languages.go`](../languages/languages.go) about the new
-driver id. The id is what `tool:` stanzas name, and by convention matches
-the `ToolID` the driver stamps into reports:
+driver id — export a `ToolID` const from the driver (also stamped into
+its reports as `tool_id`) and switch on it. For an option-less tool:
 
 ```go
-case "shellcheck":
-	if l.Target != "" || l.Std != "" {
-		return nil, fmt.Errorf("tool shellcheck takes no options")
+case shellcheck.ToolID:
+	if !l.With.IsZero() {
+		return nil, fmt.Errorf("tool %q takes no with: options", l.Tool)
 	}
 	return shellcheck.New(key, l.Name), nil
 ```
 
-A driver that needs a per-language option validates it here instead, the
-way ruff requires `target` and clang-tidy requires `std` — a manifest typo
-must fail at load, not at lint time.
+A driver that needs per-language options instead declares its own options
+struct and decodes the `with:` block against it — see the `ruffOptions` /
+`clangtidyOptions` arms, which strictly decode via `decodeWith` (unknown
+keys rejected) and then validate the values. A manifest typo must fail at
+load, not at lint time.
 
 ## 3. Declare the language and pin in the manifest
 

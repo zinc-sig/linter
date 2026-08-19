@@ -41,18 +41,18 @@ Every value below is a field of the language's stanza in
 
 | Language | Linted as | Determined by |
 |---|---|---|
-| python312 | Python 3.12 | `target: py312` (ruff `--target-version`) |
-| python313 | Python 3.13 | `target: py313` (ruff `--target-version`) |
+| python312 | Python 3.12 | `with.target: py312` (ruff `--target-version`) |
+| python313 | Python 3.13 | `with.target: py313` (ruff `--target-version`) |
 | java | Java syntax up to 21 | the pinned checkstyle grammar, on a jlink'ed OpenJDK 21 runtime |
-| c | `-std=gnu17` | `std: gnu17` (pins clang 19's probed default) |
-| cpp11 | `-std=gnu++11` | `std: gnu++11` (GNU dialect, matching the gnu17 precedent) |
-| cpp14 | `-std=gnu++14` | `std: gnu++14` (GNU dialect, matching the gnu17 precedent) |
+| c | `-std=gnu17` | `with.std: gnu17` (pins clang 19's probed default) |
+| cpp11 | `-std=gnu++11` | `with.std: gnu++11` (GNU dialect, matching the gnu17 precedent) |
+| cpp14 | `-std=gnu++14` | `with.std: gnu++14` (GNU dialect, matching the gnu17 precedent) |
 | go | Go 1.24 | the pinned Go toolchain's typechecker |
 
 Python versions stay decoupled from the base image, and more simply than
 before: no interpreter ships at all. One pinned ruff binary lints every
-Python line, so adding e.g. python314 is a new stanza with
-`target: py314` — no interpreter or virtualenv install behind it.
+Python line, so adding e.g. python314 is a new stanza whose `with:` block
+sets `target: py314` — no interpreter or virtualenv install behind it.
 
 ## Key paths
 

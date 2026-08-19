@@ -90,7 +90,7 @@ func TestParseRejects(t *testing.T) {
 		wantErr string
 	}{
 		"unknown field": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    target: py313\n    filename: solution.py\n",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    filename: solution.py\n    with: {target: py313}\n",
 			"field filename not found",
 		},
 		"unknown tool": {
@@ -99,34 +99,34 @@ func TestParseRejects(t *testing.T) {
 		},
 		"ruff without target": {
 			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n",
-			"requires target",
+			"requires with.target",
 		},
 		"clang-tidy without std": {
 			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: clang-tidy\n",
-			"requires std",
+			"requires with.std",
 		},
 		"std on ruff": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    target: py313\n    std: gnu17\n",
-			"clang-tidy option",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    with: {target: py313, std: gnu17}\n",
+			"field std not found",
 		},
 		"target on clang-tidy": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: clang-tidy\n    std: gnu17\n    target: py313\n",
-			"ruff option",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: clang-tidy\n    with: {std: gnu17, target: py313}\n",
+			"field target not found",
 		},
 		"option on checkstyle": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: checkstyle\n    std: gnu17\n",
-			"takes no options",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: checkstyle\n    with: {std: gnu17}\n",
+			"takes no with: options",
 		},
 		"option on go vet": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: go vet\n    target: py313\n",
-			"takes no options",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: go vet\n    with: {target: py313}\n",
+			"takes no with: options",
 		},
 		"invalid key": {
-			"version: 1\nlanguages:\n  Python:\n    name: X\n    tool: ruff\n    target: py313\n",
+			"version: 1\nlanguages:\n  Python:\n    name: X\n    tool: ruff\n    with: {target: py313}\n",
 			"key \"Python\" is invalid",
 		},
 		"missing name": {
-			"version: 1\nlanguages:\n  x:\n    tool: ruff\n    target: py313\n",
+			"version: 1\nlanguages:\n  x:\n    tool: ruff\n    with: {target: py313}\n",
 			"name is required",
 		},
 		"missing tool": {
@@ -138,27 +138,27 @@ func TestParseRejects(t *testing.T) {
 			"no languages",
 		},
 		"missing version": {
-			"languages:\n  x:\n    name: X\n    tool: ruff\n    target: py313\n",
+			"languages:\n  x:\n    name: X\n    tool: ruff\n    with: {target: py313}\n",
 			"version 0 is unsupported",
 		},
 		"future version": {
-			"version: 2\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    target: py313\n",
+			"version: 2\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    with: {target: py313}\n",
 			"version 2 is unsupported",
 		},
 		"malformed target": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    target: py3.13\n",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    with: {target: py3.13}\n",
 			"does not name a ruff dialect",
 		},
 		"malformed std": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: clang-tidy\n    std: \"gnu 17\"\n",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: clang-tidy\n    with: {std: \"gnu 17\"}\n",
 			"is not a -std= value",
 		},
 		"shell metacharacters in pin": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    target: py313\ntools:\n  ruff: \"0.15.21'; rm -rf /; '\"\n",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    with: {target: py313}\ntools:\n  ruff: \"0.15.21'; rm -rf /; '\"\n",
 			"not a plain version string",
 		},
 		"second document": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    target: py313\n---\nversion: 1\n",
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: ruff\n    with: {target: py313}\n---\nversion: 1\n",
 			"single YAML document",
 		},
 		"not yaml": {
@@ -188,11 +188,13 @@ languages:
   zpy:
     name: Z Python
     tool: ruff
-    target: py399
+    with:
+      target: py399
   ac:
     name: A C
     tool: clang-tidy
-    std: gnu2x
+    with:
+      std: gnu2x
   mjava:
     name: M Java
     tool: checkstyle
