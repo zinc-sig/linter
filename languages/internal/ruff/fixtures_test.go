@@ -1,4 +1,4 @@
-package python313
+package ruff
 
 // Inline fixtures: real ruff 0.15.21 output captured by running
 // /usr/local/bin/ruff check --no-cache --output-format=json

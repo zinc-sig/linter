@@ -1,5 +1,8 @@
-// Package golang lints Go sources with `go vet` (manifest key "go").
-package golang
+// Package govet is the `go vet` runner and diagnostics parser behind the
+// go language. The Go toolchain release is pinned in
+// languages/manifest.yaml; it fixes both the vet binary and the Go
+// language version its typechecker assumes for bare files.
+package govet
 
 import (
 	"fmt"
@@ -10,30 +13,35 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
-// GoVersion is the Go toolchain release installed into the image;
-// cmd/toolversions feeds it to the Dockerfile build. It pins both the vet
-// binary and the Go language version its typechecker assumes for bare files.
-const GoVersion = "1.24.0"
+// ToolID is the stable tool identifier stamped into reports (contract
+// §2) and, by construction, the driver id manifest.yaml stanzas select.
+const ToolID = "go vet"
 
 // diagRE matches vet diagnostics: path:line[:col]: message
 var diagRE = regexp.MustCompile(`^([^\s:][^:]*\.go):(\d+)(?::(\d+))?: (.+)$`)
 
-type govet struct{}
+// Linter is a `go vet`-backed implementation of linter.Linter,
+// parameterized by manifest language key and display name.
+type Linter struct {
+	language string
+	name     string
+}
 
-// New returns the go language implementation.
-func New() linter.Linter { return govet{} }
+// New returns a `go vet` linter for the given language key and display
+// name.
+func New(language, name string) *Linter {
+	return &Linter{language: language, name: name}
+}
 
-func (govet) Language() string { return "go" }
-
-// Name is the display name served to UI/API surfaces.
-func (govet) Name() string { return "Go" }
+func (l *Linter) Language() string { return l.language }
+func (l *Linter) Name() string     { return l.name }
 
 // Command passes every file to a single `go vet` invocation: bare .go files
 // are compiled together as one "command-line-arguments" package, which
 // matches how the workspace is staged. Files from mixed packages make the
 // tool itself complain, and that surfaces as an operational failure — so no
 // per-file looping is needed.
-func (govet) Command(files []string) []string {
+func (l *Linter) Command(files []string) []string {
 	return append([]string{"go", "vet"}, files...)
 }
 
@@ -44,7 +52,7 @@ func (govet) Command(files []string) []string {
 // GOMAXPROCS bounds the thread count so concurrent lints stay inside the
 // container's pids limit.
 // Variables already present in the environment take precedence.
-func (govet) Env() []string {
+func (l *Linter) Env() []string {
 	return []string{
 		"GOCACHE=/tmp/cobe-gocache",
 		"GOPATH=/tmp/cobe-gopath",
@@ -60,7 +68,7 @@ func (govet) Env() []string {
 	}
 }
 
-func (govet) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
+func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
 	findings := []linter.Finding{}
 	for _, raw := range strings.Split(string(stderr), "\n") {
 		line := strings.TrimSpace(raw)
@@ -99,9 +107,9 @@ func (govet) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
 
 	return linter.Report{
 		Version:  linter.ReportVersion,
-		Language: "go",
+		Language: l.language,
 		Tool:     linter.ToolVersion("go vet", `go version (\S+)`, "go", "version"),
-		ToolID:   "go vet",
+		ToolID:   ToolID,
 		Findings: findings,
 	}, nil
 }

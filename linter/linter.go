@@ -52,9 +52,10 @@ type Report struct {
 	Findings []Finding `json:"findings"`
 }
 
-// Linter is implemented once per language, in languages/<lang>/. The
-// filename a language is staged under inside the workspace is core's
-// deployment config, not part of this interface.
+// Linter is implemented by the tool drivers in languages/internal/ and
+// instantiated per language from languages/manifest.yaml. The filename a
+// language is staged under inside the workspace is core's deployment
+// config, not part of this interface.
 type Linter interface {
 	// Language is the manifest key, e.g. "python313".
 	Language() string

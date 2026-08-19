@@ -11,6 +11,10 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// ToolID is the stable tool identifier stamped into reports (contract
+// §2) and, by construction, the driver id manifest.yaml stanzas select.
+const ToolID = "clang-tidy"
+
 // diagRE matches clang-tidy diagnostic lines:
 //
 //	path:line:col: severity: message [rule]
@@ -89,7 +93,7 @@ func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, erro
 		Version:  linter.ReportVersion,
 		Language: l.language,
 		Tool:     linter.ToolVersion("clang-tidy", `LLVM version (\S+)`, "clang-tidy", "--version"),
-		ToolID:   "clang-tidy",
+		ToolID:   ToolID,
 		Findings: findings,
 	}, nil
 }

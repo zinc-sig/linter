@@ -1,4 +1,4 @@
-package java
+package checkstyle
 
 // Inline fixtures: real native checkstyle output captured by running the tool in
 // the image (workdir /workspace); the *ExitCode consts are the recorded

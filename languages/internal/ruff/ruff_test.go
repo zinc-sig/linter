@@ -1,4 +1,4 @@
-package python313
+package ruff
 
 import (
 	"slices"
@@ -8,8 +8,12 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// newTest builds the driver exactly as the python313 manifest stanza does;
+// the driver is target-agnostic, so one dialect exercises every path.
+func newTest() *Linter { return New("python313", "Python 3.13", "py313") }
+
 func TestMetadata(t *testing.T) {
-	l := New()
+	l := newTest()
 	if l.Name() != "Python 3.13" {
 		t.Errorf("Name = %q", l.Name())
 	}
@@ -19,7 +23,7 @@ func TestMetadata(t *testing.T) {
 }
 
 func TestCommand(t *testing.T) {
-	got := New().Command([]string{"a.py", "b.py"})
+	got := newTest().Command([]string{"a.py", "b.py"})
 	want := []string{"/usr/local/bin/ruff", "check", "--no-cache", "--output-format=json", "--target-version", "py313", "a.py", "b.py"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
@@ -27,7 +31,7 @@ func TestCommand(t *testing.T) {
 }
 
 func TestParseDirty(t *testing.T) {
-	report, err := New().Parse([]byte(dirtyStdout), nil, dirtyExitCode)
+	report, err := newTest().Parse([]byte(dirtyStdout), nil, dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -62,7 +66,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse([]byte(cleanStdout), nil, cleanExitCode)
+	report, err := newTest().Parse([]byte(cleanStdout), nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -74,7 +78,7 @@ func TestParseClean(t *testing.T) {
 // A Python syntax error makes ruff exit 1, but the invalid-syntax
 // diagnostics are still valid JSON — findings, not a failure.
 func TestParseSyntaxErrorIsFinding(t *testing.T) {
-	report, err := New().Parse([]byte(syntaxErrorStdout), nil, syntaxErrorExitCode)
+	report, err := newTest().Parse([]byte(syntaxErrorStdout), nil, syntaxErrorExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -90,7 +94,7 @@ func TestParseSyntaxErrorIsFinding(t *testing.T) {
 
 // Exit 2 is a ruff usage/internal error: an operational failure.
 func TestParseUsageError(t *testing.T) {
-	if _, err := New().Parse(nil, []byte(usageErrorStderr), usageErrorExitCode); err == nil {
+	if _, err := newTest().Parse(nil, []byte(usageErrorStderr), usageErrorExitCode); err == nil {
 		t.Fatal("Parse must fail on exit 2")
 	} else if !strings.Contains(err.Error(), "exit 2") {
 		t.Errorf("err = %v", err)
@@ -98,7 +102,7 @@ func TestParseUsageError(t *testing.T) {
 }
 
 func TestParseMultiFile(t *testing.T) {
-	report, err := New().Parse([]byte(multifileStdout), nil, multifileExitCode)
+	report, err := newTest().Parse([]byte(multifileStdout), nil, multifileExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -113,7 +117,7 @@ func TestParseMultiFile(t *testing.T) {
 }
 
 func TestParseGarbage(t *testing.T) {
-	if _, err := New().Parse([]byte("not json"), nil, 0); err == nil {
+	if _, err := newTest().Parse([]byte("not json"), nil, 0); err == nil {
 		t.Fatal("Parse must fail on unparseable output")
 	}
 }
@@ -131,7 +135,7 @@ func TestSeverityMapping(t *testing.T) {
 		{"code": "W605", "message": "invalid escape sequence"},
 		{"code": "C901", "message": "too complex (not in the default rules)"}
 	]`)
-	report, err := New().Parse(stdout, nil, 1)
+	report, err := newTest().Parse(stdout, nil, 1)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

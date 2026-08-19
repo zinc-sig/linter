@@ -1,4 +1,4 @@
-package golang
+package govet
 
 // Inline fixtures: real native `go vet` output captured by running the tool in
 // the image (workdir /workspace); the *ExitCode consts are the recorded
