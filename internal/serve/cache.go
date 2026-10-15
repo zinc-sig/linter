@@ -53,6 +53,11 @@ type assetCache struct {
 
 	mu      sync.Mutex
 	entries map[string]*cacheEntry
+	// used counts every file byte under dir plus the bytes reserved by
+	// uploads in progress: current entries, retired entries not yet
+	// removed, and staging. Uploads reserve before writing, so the files
+	// never exceed max.
+	used int64
 	// keyLocks serialises uploads per key.
 	keyLocks map[string]*keyLock
 }
@@ -102,8 +107,81 @@ func (c *assetCache) release(e *cacheEntry) {
 	remove := e.stale && e.readers == 0
 	c.mu.Unlock()
 	if remove {
-		_ = os.RemoveAll(e.dir)
+		c.remove([]*cacheEntry{e})
 	}
+}
+
+// remove deletes retired entries no lint reads and returns their bytes
+// to the budget.
+func (c *assetCache) remove(gone []*cacheEntry) {
+	for _, e := range gone {
+		_ = os.RemoveAll(e.dir)
+		c.mu.Lock()
+		c.used -= e.size
+		c.mu.Unlock()
+	}
+}
+
+// reserve claims n bytes of the budget for an upload of key. When the
+// budget is short it evicts the least recently used entries no lint is
+// reading, key's own entry last, and removes them before returning, so
+// the caller may write n bytes at once.
+func (c *assetCache) reserve(key string, n int64) error {
+	c.mu.Lock()
+	if c.used+n <= c.max {
+		c.used += n
+		c.mu.Unlock()
+		return nil
+	}
+	var candidates []string
+	for k, e := range c.entries {
+		if e.readers == 0 {
+			candidates = append(candidates, k)
+		}
+	}
+	slices.SortFunc(candidates, func(a, b string) int {
+		switch {
+		case a == key:
+			return 1
+		case b == key:
+			return -1
+		}
+		return c.entries[a].lastUsed.Compare(c.entries[b].lastUsed)
+	})
+	var freed int64
+	evict := 0
+	for c.used-freed+n > c.max && evict < len(candidates) {
+		freed += c.entries[candidates[evict]].size
+		evict++
+	}
+	if c.used-freed+n > c.max {
+		c.mu.Unlock()
+		return errCacheFull
+	}
+	gone := make([]*cacheEntry, 0, evict)
+	for _, k := range candidates[:evict] {
+		gone = append(gone, c.retireLocked(k))
+	}
+	c.used += n
+	c.mu.Unlock()
+	c.remove(gone)
+	return nil
+}
+
+// unreserve returns the bytes a failed upload reserved.
+func (c *assetCache) unreserve(n int64) {
+	c.mu.Lock()
+	c.used -= n
+	c.mu.Unlock()
+}
+
+// retireLocked takes key's entry out of the map. Its directory stays
+// counted in used until it is removed.
+func (c *assetCache) retireLocked(key string) *cacheEntry {
+	e := c.entries[key]
+	delete(c.entries, key)
+	e.stale = true
+	return e
 }
 
 func (c *assetCache) holds(key, fingerprint string) bool {
@@ -146,75 +224,43 @@ func (c *assetCache) put(key, fingerprint string, body io.Reader) error {
 	if err != nil {
 		return diskError(err)
 	}
-	size, err := extractAssets(body, staging, c.max)
+	var reserved int64
+	size, err := extractAssets(body, staging, c.max, func(n int64) error {
+		if err := c.reserve(key, n); err != nil {
+			return err
+		}
+		reserved += n
+		return nil
+	})
+	if err == nil {
+		err = c.install(key, fingerprint, staging, filepath.Join(c.dir, "set-"+randomHex(8)), size, reserved)
+	}
 	if err != nil {
 		_ = os.RemoveAll(staging)
-		return err
+		c.unreserve(reserved)
 	}
-
-	final := filepath.Join(c.dir, "set-"+randomHex(8))
-	evicted, err := c.install(key, fingerprint, staging, final, size)
-	if err != nil {
-		_ = os.RemoveAll(staging)
-		return err
-	}
-	for _, dir := range evicted {
-		_ = os.RemoveAll(dir)
-	}
-	return nil
+	return err
 }
 
-// install makes room, renames staging into place and swaps the entry.
-// It returns the directories that no reader holds any more.
-func (c *assetCache) install(key, fingerprint, staging, final string, size int64) ([]string, error) {
+// install renames staging into place and swaps the entry; the reserved
+// bytes become the entry's size.
+func (c *assetCache) install(key, fingerprint, staging, final string, size, reserved int64) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	var used int64
-	var candidates []string
-	for k, e := range c.entries {
-		if k == key {
-			continue // replaced below
-		}
-		used += e.size
-		if e.readers == 0 {
-			candidates = append(candidates, k)
-		}
-	}
-	slices.SortFunc(candidates, func(a, b string) int {
-		return c.entries[a].lastUsed.Compare(c.entries[b].lastUsed)
-	})
-	var evict []string
-	for used+size > c.max && len(candidates) > 0 {
-		k := candidates[0]
-		candidates = candidates[1:]
-		used -= c.entries[k].size
-		evict = append(evict, k)
-	}
-	if used+size > c.max {
-		return nil, errCacheFull
-	}
 	if err := os.Rename(staging, final); err != nil {
-		return nil, diskError(err)
+		c.mu.Unlock()
+		return diskError(err)
 	}
-
-	var gone []string
-	retire := func(k string) {
-		e := c.entries[k]
-		delete(c.entries, k)
-		e.stale = true
-		if e.readers == 0 {
-			gone = append(gone, e.dir)
-		}
-	}
-	for _, k := range evict {
-		retire(k)
-	}
+	var gone []*cacheEntry
 	if _, ok := c.entries[key]; ok {
-		retire(key)
+		if e := c.retireLocked(key); e.readers == 0 {
+			gone = append(gone, e)
+		}
 	}
 	c.entries[key] = &cacheEntry{fingerprint: fingerprint, dir: final, size: size, lastUsed: time.Now()}
-	return gone, nil
+	c.used += size - reserved
+	c.mu.Unlock()
+	c.remove(gone)
+	return nil
 }
 
 // diskError maps ENOSPC onto errCacheFull.
@@ -226,8 +272,9 @@ func diskError(err error) error {
 }
 
 // extractAssets unpacks a tar stream into dir under the rules of contract
-// section 9.2 and returns the bytes written.
-func extractAssets(body io.Reader, dir string, maxBytes int64) (int64, error) {
+// section 9.2 and returns the bytes written. reserve claims each file's
+// declared size before the file is written.
+func extractAssets(body io.Reader, dir string, maxBytes int64, reserve func(n int64) error) (int64, error) {
 	tr := tar.NewReader(body)
 	files := make(map[string]bool)
 	dirs := make(map[string]bool) // true when an entry named it
@@ -282,6 +329,12 @@ func extractAssets(body io.Reader, dir string, maxBytes int64) (int64, error) {
 			return 0, invalidAssets("entry %q appears twice or is also a directory", name)
 		}
 		files[name] = true
+		if hdr.Size > maxBytes-total {
+			return 0, errTooLarge
+		}
+		if err := reserve(hdr.Size); err != nil {
+			return 0, err
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return 0, diskError(err)
 		}

@@ -537,16 +537,24 @@ bits, owners and times in the archive are ignored; files are written
 
 **Atomic replace.** An upload extracts into a staging directory on the
 same filesystem and renames it into place only when complete; a failed
-upload leaves the previous entry untouched. Uploads for one key are
+upload never alters the previous entry, though it may have evicted it
+(below). Uploads for one key are
 serialised, and the one that completes last wins. A lint that started
 copying an entry keeps reading that entry even when an upload replaces
 it, and the old directory is deleted when its last reader is done. A lint
 therefore sees one complete asset set, never a mix.
 
-**Eviction.** The server may evict any entry no lint is reading, at any
-time. It evicts the least recently used entries when an upload would
-exceed `--cache-max-bytes`. The cache starts empty on every container
-start. Clients treat `assets_required` as a normal cache miss.
+**Budget and eviction.** `--cache-max-bytes` bounds every file byte under
+`--cache-dir`: current entries, replaced or evicted entries a lint still
+reads, and the staging directories of uploads in progress. An upload
+reserves each file's declared size before writing it. When the budget is
+short, the server first evicts the least recently used entries no lint is
+reading, the uploaded key's own entry last; when that cannot make room,
+the upload answers `cache_full`. A filesystem of `--cache-max-bytes`
+therefore never fills up through the cache. The server may also evict any
+entry no lint is reading at any other time. The cache starts empty on
+every container start. Clients treat `assets_required` as a normal cache
+miss.
 
 ### 9.3 Tool environment
 

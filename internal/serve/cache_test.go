@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -150,6 +152,118 @@ func TestCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	entries, _ := os.ReadDir(c.dir)
 	if len(entries) != 2 {
 		t.Errorf("cache holds %d directories, want 2", len(entries))
+	}
+}
+
+// diskWatcher feeds an upload body and records the most file bytes the
+// cache directory held at any read.
+type diskWatcher struct {
+	r    io.Reader
+	dir  string
+	peak int64
+}
+
+func (d *diskWatcher) Read(p []byte) (int, error) {
+	d.peak = max(d.peak, fileBytes(d.dir))
+	return d.r.Read(p)
+}
+
+func fileBytes(dir string) int64 {
+	var total int64
+	_ = filepath.WalkDir(dir, func(_ string, e fs.DirEntry, err error) error {
+		if err == nil && e.Type().IsRegular() {
+			if info, err := e.Info(); err == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total
+}
+
+func used(c *assetCache) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.used
+}
+
+func TestCacheEvictsBeforeStaging(t *testing.T) {
+	c := newAssetCache(t.TempDir(), 100)
+	for _, k := range []string{"a", "b"} {
+		if err := c.put(k, fp1, bytes.NewReader(tarOf(t, file("f", strings.Repeat("x", 40))))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two files, so that the second is read after the first was staged.
+	body := &diskWatcher{r: bytes.NewReader(tarOf(t, file("f", strings.Repeat("x", 30)), file("g", strings.Repeat("x", 30)))), dir: c.dir}
+	if err := c.put("c", fp1, body); err != nil {
+		t.Fatal(err)
+	}
+	if body.peak > c.max {
+		t.Errorf("the cache held %d bytes during the upload, over its budget of %d", body.peak, c.max)
+	}
+	if c.holds("a", fp1) || !c.holds("b", fp1) || !c.holds("c", fp1) {
+		t.Errorf("eviction picked the wrong entry: %v", keys(c))
+	}
+	if got, want := used(c), fileBytes(c.dir); got != want {
+		t.Errorf("used = %d, files hold %d", got, want)
+	}
+}
+
+func TestCacheEvictsItsOwnKeyLast(t *testing.T) {
+	c := newAssetCache(t.TempDir(), 100)
+	c.put("k", fp1, bytes.NewReader(tarOf(t, file("v", strings.Repeat("x", 30)))))
+	c.put("o", fp1, bytes.NewReader(tarOf(t, file("v", strings.Repeat("x", 30)))))
+	// Touch o so that k is the least recently used.
+	e, _ := c.acquire("o", fp1)
+	c.release(e)
+	if err := c.put("k", fp2, bytes.NewReader(tarOf(t, file("v", strings.Repeat("x", 60))))); err != nil {
+		t.Fatal(err)
+	}
+	if !c.holds("k", fp2) || c.holds("o", fp1) {
+		t.Errorf("entries %v, want k replaced and o evicted first", keys(c))
+	}
+	// Room only by evicting k's own set: allowed while no lint reads it.
+	if err := c.put("k", fp1, bytes.NewReader(tarOf(t, file("v", strings.Repeat("x", 70))))); err != nil {
+		t.Fatal(err)
+	}
+	if !c.holds("k", fp1) {
+		t.Errorf("entries %v, want k replaced", keys(c))
+	}
+	if got, want := used(c), int64(70); got != want {
+		t.Errorf("used = %d, want %d", got, want)
+	}
+}
+
+func TestCacheFailedUploadReturnsItsReservation(t *testing.T) {
+	c := newAssetCache(t.TempDir(), 100)
+	c.put("k", fp1, bytes.NewReader(tarOf(t, file("v", strings.Repeat("x", 30)))))
+	old, _ := c.acquire("k", fp1)
+	// The first file is staged, then the symbolic link rejects the upload.
+	bad := tarOf(t, file("a", strings.Repeat("x", 20)), tar.Header{Typeflag: tar.TypeSymlink, Name: "l", Linkname: "/etc/passwd"})
+	if err := c.put("k", fp2, bytes.NewReader(bad)); err == nil {
+		t.Fatal("bad upload accepted")
+	}
+	if got := used(c); got != 30 {
+		t.Errorf("used = %d after a failed upload, want 30", got)
+	}
+	// Room only by evicting k's own set, which a lint reads.
+	if err := c.put("k", fp2, bytes.NewReader(tarOf(t, file("v", strings.Repeat("x", 80))))); !errors.Is(err, errCacheFull) {
+		t.Errorf("put = %v, want errCacheFull", err)
+	}
+	if !c.holds("k", fp1) {
+		t.Error("a failed upload changed the entry")
+	}
+	// A replaced set still being read counts until its last reader leaves.
+	if err := c.put("k", fp2, bytes.NewReader(tarOf(t, file("v", strings.Repeat("x", 50))))); err != nil {
+		t.Fatal(err)
+	}
+	if got := used(c); got != 80 {
+		t.Errorf("used = %d with the replaced set still read, want 80", got)
+	}
+	c.release(old)
+	if got := used(c); got != 50 {
+		t.Errorf("used = %d after the last reader left, want 50", got)
 	}
 }
 
