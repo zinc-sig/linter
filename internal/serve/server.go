@@ -318,7 +318,31 @@ func (s *Server) runGoWarmup() {
 	s.state.done(componentGoWarmup)
 }
 
-// goWarmup lints a trivial Go file once so that GOCACHE is warm (contract
+// goWarmupSample imports the standard packages student programs use most,
+// so that the first lints find them compiled in GOCACHE.
+const goWarmupSample = `package main
+
+import (
+	"bufio"
+	"fmt"
+	"math"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	r := bufio.NewReader(os.Stdin)
+	s, _ := r.ReadString('\n')
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	v := []float64{math.Sqrt(float64(n))}
+	sort.Float64s(v)
+	fmt.Println(v)
+}
+`
+
+// goWarmup lints goWarmupSample once so that GOCACHE is warm (contract
 // section 9.5).
 func goWarmup(ctx context.Context, s *Server) error {
 	for key, l := range s.linters {
@@ -330,7 +354,7 @@ func goWarmup(ctx context.Context, s *Server) error {
 			return err
 		}
 		defer os.RemoveAll(ws)
-		if err := writeCode(ws, "warmup.go", "package main\n\nfunc main() {}\n"); err != nil {
+		if err := writeCode(ws, "warmup.go", goWarmupSample); err != nil {
 			return err
 		}
 		_, err = linter.RunContext(ctx, l, []string{"warmup.go"}, linter.Options{Dir: ws, Env: linter.ScrubbedEnv(l)})

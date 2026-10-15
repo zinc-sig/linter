@@ -595,13 +595,17 @@ no service variables are injected either.
 
 ### 9.5 Go build-cache warm-up
 
-When any manifest language uses `go vet`, the server lints the bundled
-sample `package main\n\nfunc main() {}\n` as `warmup.go` once at startup,
-outside the worker pool, with a 2 minute timeout. `GOCACHE` starts empty
-on every container start and a cold `go vet` takes 10 seconds or more, so
-this single cold run fills the cache before any request. Readiness waits
-for it, so no Go lint runs cold or concurrently with it. A failed warm-up
-is logged and does not block readiness.
+When any manifest language uses `go vet`, the server lints a bundled
+sample as `warmup.go` once at startup, outside the worker pool, with a 2
+minute timeout. The sample is a `package main` that imports the standard
+packages student programs use most (`bufio`, `fmt`, `math`, `os`, `sort`,
+`strconv`, `strings`). `GOCACHE` starts empty on every container start
+and a cold `go vet` takes 10 seconds or more, so this single cold run
+fills the cache before any request. Readiness waits for it, so no Go lint
+runs cold or concurrently with it. Measured on two CPUs: the warm-up
+takes about 13 seconds, and the first Go lint importing `fmt` after it
+runs in about 130 ms instead of about 950 ms with an empty `main`. A
+failed warm-up is logged and does not block readiness.
 
 ### 9.6 Resident checkstyle worker
 
