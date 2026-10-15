@@ -269,8 +269,9 @@ func (s *Server) lint(ctx context.Context, job *lintJob) (linter.Report, error) 
 	if err != nil {
 		return linter.Report{}, setupFailed(err)
 	}
-	// Removed only after the tool, or the checkstyle worker, is done
-	// reading it: Check returns only then.
+	// A one-shot tool has exited by the time this runs. A Java request
+	// that passed its deadline may still be on the checkstyle worker, which
+	// may then find the file gone; its reply is discarded anyway.
 	defer os.RemoveAll(ws)
 
 	if job.fingerprint != "" {

@@ -9,9 +9,12 @@
 // Callers pass Check a context that carries the request deadline. Once a
 // request has been written to the JVM, Check ignores cancellation and
 // returns only when the JVM replies, dies, or the deadline passes, because
-// the JVM keeps reading the workspace files until then and cannot stop the
-// thread that runs the audit. A deadline overrun poisons the JVM: Check
-// kills it, waits for it to exit, and returns ErrTimeout.
+// the JVM cannot stop the thread that runs the audit. When the deadline
+// passes first, Check returns ErrTimeout and the request keeps its thread
+// slot until the JVM replies. A request still unanswered RunBudget after it
+// was sent poisons the JVM, which is then killed and restarted. The budget
+// is measured from the send, so time spent waiting for a slot or a restart
+// never counts against the JVM.
 package checkstyleworker
 
 import (
@@ -61,8 +64,9 @@ func DefaultEnv() []string {
 // Errors Check returns besides a context error.
 var (
 	// ErrTimeout: the deadline passed, either while waiting for a slot or
-	// a running JVM (nothing was sent) or with the request in flight (the
-	// JVM was poisoned and has been killed). Serve answers 504 timeout.
+	// a running JVM (nothing was sent) or with the request in flight (its
+	// reply is discarded on arrival), or the run budget passed (the JVM was
+	// poisoned and has been killed). Serve answers 504 timeout.
 	ErrTimeout = errors.New("checkstyle worker: deadline exceeded")
 	// ErrRestarted: the JVM died or was replaced with the request in
 	// flight. Serve answers 503 linter_not_ready.
@@ -97,6 +101,10 @@ type Config struct {
 	// is the number of failed starts tolerated, and one more failed start
 	// marks the worker failed. Defaults to 1 s and 2 s (three starts).
 	Backoff []time.Duration
+	// RunBudget is how long the JVM may take over one request, measured
+	// from the send; a request still unanswered after it poisons the JVM.
+	// Defaults to 8 seconds.
+	RunBudget time.Duration
 	// MaxReplyBytes bounds one reply line; a longer line counts as an
 	// invalid reply. Defaults to 32 MiB.
 	MaxReplyBytes int
@@ -156,6 +164,9 @@ func Start(cfg Config) (*Worker, error) {
 	}
 	if cfg.Backoff == nil {
 		cfg.Backoff = []time.Duration{time.Second, 2 * time.Second}
+	}
+	if cfg.RunBudget <= 0 {
+		cfg.RunBudget = 8 * time.Second
 	}
 	if cfg.MaxReplyBytes <= 0 {
 		cfg.MaxReplyBytes = 32 << 20
@@ -225,7 +236,12 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 	case <-w.quit:
 		return Output{}, ErrClosed
 	}
-	defer func() { <-w.sem }()
+	held := true
+	defer func() {
+		if held {
+			<-w.sem
+		}
+	}()
 
 	for {
 		p, err := w.await(ctx)
@@ -233,7 +249,7 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 			return Output{}, err
 		}
 		// select picks at random among ready cases, so an expired request
-		// can get here; sending it would poison a healthy JVM.
+		// can get here; sending it would only waste a JVM thread.
 		if ctx.Err() != nil {
 			return Output{}, ctxErr(ctx)
 		}
@@ -241,7 +257,15 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 		if !sent {
 			continue // died between await and send; wait for the next one
 		}
-		return w.wait(ctx, p, reply)
+		budget := time.NewTimer(w.cfg.RunBudget)
+		out, settled, err := w.wait(ctx, p, reply, budget)
+		if settled {
+			budget.Stop()
+		} else {
+			held = false
+			go w.finish(p, reply, budget)
+		}
+		return out, err
 	}
 }
 
@@ -268,8 +292,10 @@ func (w *Worker) await(ctx context.Context) (*process, error) {
 }
 
 // wait collects the reply of a request already sent to p. Cancellation
-// without a deadline is ignored here (package documentation).
-func (w *Worker) wait(ctx context.Context, p *process, reply <-chan result) (Output, error) {
+// without a deadline is ignored here (package documentation). settled is
+// false when the deadline passed first: the request is still on the JVM
+// and its slot and budget pass to finish.
+func (w *Worker) wait(ctx context.Context, p *process, reply <-chan result, budget *time.Timer) (out Output, settled bool, err error) {
 	var deadline <-chan time.Time
 	if d, ok := ctx.Deadline(); ok {
 		t := time.NewTimer(time.Until(d))
@@ -278,17 +304,48 @@ func (w *Worker) wait(ctx context.Context, p *process, reply <-chan result) (Out
 	}
 	select {
 	case r := <-reply:
-		return w.output(r)
+		out, err = w.output(r)
+		return out, true, err
+	case <-budget.C:
+		if r, ok := w.poison(p, reply); ok {
+			out, err = w.output(r)
+			return out, true, err
+		}
+		return Output{}, true, ErrTimeout
 	case <-deadline:
 	}
 	select {
 	case r := <-reply: // the reply raced the deadline
-		return w.output(r)
+		out, err = w.output(r)
+		return out, true, err
+	default:
+		return Output{}, false, ErrTimeout
+	}
+}
+
+// finish holds the thread slot of a request whose caller has been
+// answered until the JVM replies or the run budget passes.
+func (w *Worker) finish(p *process, reply <-chan result, budget *time.Timer) {
+	defer func() { <-w.sem }()
+	select {
+	case <-reply: // discarded
+		budget.Stop()
+	case <-budget.C:
+		_, _ = w.poison(p, reply)
+	}
+}
+
+// poison kills p for a request that overran its run budget and waits for
+// p to exit. When the reply raced the budget, it returns the reply instead.
+func (w *Worker) poison(p *process, reply <-chan result) (result, bool) {
+	select {
+	case r := <-reply:
+		return r, true
 	default:
 	}
-	p.kill("request exceeded its deadline (poisoned)")
+	p.kill("request exceeded its run budget (poisoned)")
 	<-p.done
-	return Output{}, ErrTimeout
+	return result{}, false
 }
 
 func (w *Worker) output(r result) (Output, error) {

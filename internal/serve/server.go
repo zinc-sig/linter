@@ -47,8 +47,9 @@ type Deps struct {
 	// ToolOf returns a language's driver id (languages.Tool*).
 	ToolOf func(language string) string
 	// StartChecker starts the resident checkstyle worker with a pool of
-	// threads; called only when a language uses checkstyle.
-	StartChecker func(threads int, log func(string)) (Checker, error)
+	// threads and a per-request run budget; called only when a language
+	// uses checkstyle.
+	StartChecker func(threads int, runBudget time.Duration, log func(string)) (Checker, error)
 	// GoWarmup fills the Go build cache once; called only when a language
 	// uses go vet.
 	GoWarmup func(ctx context.Context, s *Server) error
@@ -63,8 +64,8 @@ func DefaultDeps(stderr io.Writer) Deps {
 		Linters:         languages.All(),
 		ManifestVersion: languages.ManifestVersion(),
 		ToolOf:          languages.Tool,
-		StartChecker: func(threads int, log func(string)) (Checker, error) {
-			return checkstyleworker.Start(checkstyleworker.Config{Threads: threads, Log: log})
+		StartChecker: func(threads int, runBudget time.Duration, log func(string)) (Checker, error) {
+			return checkstyleworker.Start(checkstyleworker.Config{Threads: threads, RunBudget: runBudget, Log: log})
 		},
 		GoWarmup: goWarmup,
 		Log:      stderr,
@@ -280,7 +281,7 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) startChecker() error {
-	c, err := s.deps.StartChecker(s.cfg.Workers, func(msg string) {
+	c, err := s.deps.StartChecker(s.cfg.Workers, s.cfg.Deadline, func(msg string) {
 		s.log.Info("checkstyle worker", "event", string(s.redact([]byte(msg))))
 	})
 	if err != nil {

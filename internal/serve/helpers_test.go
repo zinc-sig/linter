@@ -145,7 +145,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		Linters:         o.linters,
 		ManifestVersion: 1,
 		ToolOf:          func(k string) string { return o.toolOf[k] },
-		StartChecker: func(int, func(string)) (Checker, error) {
+		StartChecker: func(int, time.Duration, func(string)) (Checker, error) {
 			if o.checker == nil {
 				t.Fatal("unexpected checkstyle worker start")
 			}

@@ -300,16 +300,16 @@ func TestCrashFailsInFlightAndRestarts(t *testing.T) {
 	}
 }
 
-func TestDeadlinePoisonsAndRestarts(t *testing.T) {
-	f := start(t, "ok", nil)
+func TestRunBudgetPoisonsAndRestarts(t *testing.T) {
+	f := start(t, "ok", func(c *Config) { c.RunBudget = 300 * time.Millisecond })
+	// Sent after the hanging request, so its own budget passes later.
 	other := make(chan error, 1)
-	go func() {
+	time.AfterFunc(100*time.Millisecond, func() {
 		_, err := check(f.w, 5*time.Second, "sleep=3000")
 		other <- err
-	}()
-	time.Sleep(100 * time.Millisecond)
+	})
 	began := time.Now()
-	if _, err := check(f.w, 300*time.Millisecond, "hang"); !errors.Is(err, ErrTimeout) {
+	if _, err := check(f.w, 5*time.Second, "hang"); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("hanging request: err = %v, want ErrTimeout", err)
 	}
 	if elapsed := time.Since(began); elapsed > 2*time.Second {
@@ -323,6 +323,82 @@ func TestDeadlinePoisonsAndRestarts(t *testing.T) {
 	}
 	if got := f.logs.count("poisoned"); got != 1 {
 		t.Fatalf("poison log lines = %d, want 1", got)
+	}
+}
+
+func TestDeadlineBeforeRunBudgetDoesNotPoison(t *testing.T) {
+	f := start(t, "ok", func(c *Config) { c.RunBudget = 2 * time.Second })
+	other := make(chan error, 1)
+	go func() {
+		_, err := check(f.w, 5*time.Second, "sleep=800")
+		other <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	began := time.Now()
+	if _, err := check(f.w, 200*time.Millisecond, "sleep=500"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("late request: err = %v, want ErrTimeout", err)
+	}
+	if elapsed := time.Since(began); elapsed > 400*time.Millisecond {
+		t.Fatalf("answered after %s, want about 200ms", elapsed)
+	}
+	if err := <-other; err != nil {
+		t.Fatalf("other request in flight: %v", err)
+	}
+	if got := f.logs.count("poisoned"); got != 0 {
+		t.Fatalf("poison log lines = %d, want 0", got)
+	}
+	if got := f.starts(); got != 1 {
+		t.Fatalf("starts = %d, want 1", got)
+	}
+}
+
+func TestTimedOutRequestKeepsItsSlotUntilReply(t *testing.T) {
+	f := start(t, "ok", func(c *Config) {
+		c.Threads = 1
+		c.RunBudget = 2 * time.Second
+	})
+	began := time.Now()
+	if _, err := check(f.w, 100*time.Millisecond, "sleep=500"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("late request: err = %v, want ErrTimeout", err)
+	}
+	out, err := check(f.w, 5*time.Second, "active")
+	if err != nil {
+		t.Fatalf("next request: %v", err)
+	}
+	if got := string(out.Stdout); got != "1" {
+		t.Fatalf("most requests on the JVM at once = %s, want 1", got)
+	}
+	if elapsed := time.Since(began); elapsed < 500*time.Millisecond {
+		t.Fatalf("next request done after %s, before the late reply", elapsed)
+	}
+}
+
+func TestTimedOutRequestPoisonsAtItsRunBudget(t *testing.T) {
+	f := start(t, "ok", func(c *Config) { c.RunBudget = 500 * time.Millisecond })
+	began := time.Now()
+	if _, err := check(f.w, 100*time.Millisecond, "hang"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	if elapsed := time.Since(began); elapsed > 400*time.Millisecond {
+		t.Fatalf("answered after %s, want about 100ms", elapsed)
+	}
+	if got := f.logs.count("poisoned"); got != 0 {
+		t.Fatalf("poisoned at the deadline: %d poison log lines", got)
+	}
+	for f.logs.count("poisoned") == 0 {
+		if time.Since(began) > 5*time.Second {
+			t.Fatal("not poisoned 5s after the send")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if elapsed := time.Since(began); elapsed < 450*time.Millisecond {
+		t.Fatalf("poisoned after %s, before the run budget", elapsed)
+	}
+	if _, err := check(f.w, 5*time.Second, "Solution.java"); err != nil {
+		t.Fatalf("after restart: %v", err)
+	}
+	if got := f.starts(); got != 2 {
+		t.Fatalf("starts = %d, want 2", got)
 	}
 }
 
@@ -362,13 +438,17 @@ func TestCancelledRequestWaitsForItsReply(t *testing.T) {
 	}
 }
 
-func TestCancelledAbandonedRequestIsPoisonedAtItsDeadline(t *testing.T) {
+func TestCancelledAbandonedRequestIsAnsweredAtItsDeadline(t *testing.T) {
 	f := start(t, "ok", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	time.AfterFunc(50*time.Millisecond, cancel)
+	began := time.Now()
 	if _, err := f.w.Check(ctx, []string{"/ws/hang"}); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	if elapsed := time.Since(began); elapsed < 250*time.Millisecond {
+		t.Fatalf("returned after %s, before the deadline", elapsed)
 	}
 }
 

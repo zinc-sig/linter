@@ -459,8 +459,9 @@ waits for a worker, the queue, or the checkstyle worker.
 - `503 {"status": "stuck", "reason": "..."}` when a worker slot has been
   held by one request for more than three times `--deadline` (24 seconds
   by default). One-shot tools are killed at the deadline and the
-  checkstyle worker is restarted at the deadline (section 9.4), so only a
-  process the kernel cannot kill reaches this state.
+  checkstyle worker is restarted once a request has run on it for
+  `--deadline` (sections 9.4 and 9.6), so only a process the kernel cannot
+  kill reaches this state.
 
 ### 8.7 `GET /healthz/ready`
 
@@ -505,9 +506,10 @@ parent directories, so the student file replaces an asset of the same
 path. An asset file where `filename` needs a directory is a
 `workspace_setup_failed`. The tool runs with the workspace as its working
 directory and `filename` as its file argument (section 4). The directory
-is removed once no process can still read it: after the tool exits, or,
-for an abandoned Java request, after the checkstyle worker replies or is
-killed.
+is removed after the tool exits; for a Java request, when the request is
+answered or abandoned. A Java request that passed its deadline may still
+be running on the checkstyle worker and then finds its file gone; its
+reply is discarded either way.
 
 **Cache layout.** Entries live under `--cache-dir`, one per cache key, and
 each holds one fingerprint. Entries contain only regular files and
@@ -587,10 +589,14 @@ injected either.
 - A Java request in flight is abandoned when its client disconnects: its
   result is discarded on arrival, and its worker slot stays held until the
   checkstyle worker replies or the request's deadline passes, so abandoned
-  requests still count against `--workers` and the checkstyle thread pool
-  is never oversubscribed. When a Java request's deadline passes, the
-  checkstyle worker is considered poisoned, because Java cannot stop a
-  thread, and is restarted (section 9.6).
+  requests still count against `--workers`.
+- A Java request whose deadline passes while it runs answers
+  `504 timeout` at once, but keeps its checkstyle thread until the
+  checkstyle worker replies, so the thread pool is never oversubscribed.
+  When the request has run for `--deadline` since it was sent to the
+  worker, the worker is considered poisoned, because Java cannot stop a
+  thread, and is restarted (section 9.6). Time spent queued or waiting
+  for a restart does not count towards poisoning.
 - A request whose client is gone gets no response. A request that hit the
   deadline answers `504 timeout`.
 
@@ -619,9 +625,10 @@ threads.
 - **Warm-up.** Before the server is ready, the worker lints a bundled
   sample; its reply is the worker's readiness signal.
 - **Restart.** The server restarts the worker when it exits, when it
-  writes a line that is not a valid reply, or when a request's deadline
-  passes (poisoned). The poisoned request answers `504 timeout`; every
-  other request in flight on the old worker answers
+  writes a line that is not a valid reply, or when a request is still
+  unanswered `--deadline` after it was sent to the worker (poisoned). The
+  poisoned request has already answered `504 timeout` at its own
+  deadline; every other request in flight on the old worker answers
   `503 linter_not_ready`. Java requests that arrive during a restart hold
   their worker slot and wait for the replacement until their deadline,
   then answer `504 timeout`.
