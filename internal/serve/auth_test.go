@@ -2,6 +2,7 @@ package serve
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zinc-sig/linter/internal/checkstyleworker"
+	"github.com/zinc-sig/linter/languages"
 	"github.com/zinc-sig/linter/linter"
 )
 
@@ -132,5 +135,53 @@ func TestTokenIsRedacted(t *testing.T) {
 		if bytes.Contains(r.body, []byte(testToken)) || !bytes.Contains(r.body, []byte("[redacted]")) {
 			t.Errorf("response not redacted: %s", r.body)
 		}
+	}
+}
+
+// TestTokenIsRedactedBeforeTruncation places the token across the finding
+// message cap and the stderr snippet cap, where truncating first would
+// leave a prefix the redaction no longer matches.
+func TestTokenIsRedactedBeforeTruncation(t *testing.T) {
+	dir := shortTempDir(t)
+	tokenFile := filepath.Join(dir, "token")
+	os.WriteFile(tokenFile, []byte(testToken), 0o600)
+	pad := func(n int, c string) string { return strings.Repeat(c, n) }
+	c := newFakeChecker()
+	close(c.ready)
+	var javaOut checkstyleworker.Output
+	c.check = func(context.Context, []string) (checkstyleworker.Output, error) { return javaOut, nil }
+	ts := startServer(t, serverOpts{
+		linters: []linter.Linter{
+			fakeLinter{lang: "message", script: `printf '%s' ` + pad(4070, "a") + `; cat ` + tokenFile + `; echo`},
+			fakeLinter{lang: "stderr", script: `{ printf '%s' ` + pad(1960, "b") + `; cat ` + tokenFile + `; } >&2; exit 42`},
+			fakeLinter{lang: "java"},
+		},
+		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		checker: c,
+		tune:    func(c *Config) { c.Listen, c.TokenFile = "127.0.0.1:0", tokenFile },
+	})
+	cases := []struct {
+		name, lang string
+		javaOut    checkstyleworker.Output
+		status     int
+	}{
+		{"finding message", "message", checkstyleworker.Output{}, 200},
+		{"stderr snippet", "stderr", checkstyleworker.Output{}, 500},
+		{"java finding message", "java", checkstyleworker.Output{Stdout: []byte(pad(4070, "a") + testToken + "\n")}, 200},
+		{"java stderr snippet", "java", checkstyleworker.Output{Stderr: []byte(pad(1960, "b") + testToken), ExitCode: 42}, 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			javaOut = tc.javaOut
+			r := ts.lint(t, map[string]any{"language": tc.lang, "filename": "a.py", "code": ""})
+			if r.status != tc.status || !bytes.Contains(r.body, []byte("[redacted]")) {
+				t.Fatalf("got %d, want %d with the token redacted: %.200s", r.status, tc.status, r.body)
+			}
+			for i := 0; i+16 <= len(testToken); i++ {
+				if part := testToken[i : i+16]; bytes.Contains(r.body, []byte(part)) {
+					t.Fatalf("response carries %q of the token", part)
+				}
+			}
+		})
 	}
 }

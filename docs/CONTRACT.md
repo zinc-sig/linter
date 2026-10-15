@@ -204,7 +204,11 @@ value out of range) is a usage error.
 - **Token confidentiality.** The server never logs the token, never puts
   it or the token file path into a tool's environment (section 9.3), and
   replaces every occurrence of the token in a response body with
-  `[redacted]` before sending it. The redaction exists because the tools
+  `[redacted]` before sending it. A tool's stdout and stderr are redacted
+  as soon as the tool exits, before parsing and before any message or
+  stderr snippet is truncated, so that no cap can cut the token into a
+  prefix the redaction no longer matches; the encoded body is redacted
+  again as a backstop. The redaction exists because the tools
   run as the same user as the server and can read the mounted token file:
   a C source that includes the file would otherwise echo it back in a
   diagnostic. The server also marks itself non-dumpable

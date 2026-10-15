@@ -51,6 +51,10 @@ type Options struct {
 	// MaxOutput bounds stdout and stderr each; zero means
 	// DefaultMaxOutput.
 	MaxOutput int
+	// Redact, when set, rewrites stdout and stderr once the tool has
+	// exited, before Parse or an error message sees them, so that no later
+	// truncation can split what it removes.
+	Redact func([]byte) []byte
 }
 
 // Run executes l's native tool on files and returns the normalized Report.
@@ -94,6 +98,10 @@ func RunContext(ctx context.Context, l Linter, files []string, opts Options) (Re
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
+	outBytes, errBytes := stdout.Bytes(), stderr.Bytes()
+	if opts.Redact != nil {
+		outBytes, errBytes = opts.Redact(outBytes), opts.Redact(errBytes)
+	}
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
@@ -101,14 +109,14 @@ func RunContext(ctx context.Context, l Linter, files []string, opts Options) (Re
 		}
 		exitCode = exitErr.ExitCode()
 		if exitCode < 0 { // killed by a signal
-			return Report{}, fmt.Errorf("%s: %s\nstderr: %s", argv[0], exitErr, StderrSnippet(stderr.Bytes()))
+			return Report{}, fmt.Errorf("%s: %s\nstderr: %s", argv[0], exitErr, StderrSnippet(errBytes))
 		}
 	}
 	if stdout.overflow || stderr.overflow {
 		return Report{}, fmt.Errorf("%s: %w (%d bytes)", argv[0], ErrOutputTooLarge, limit)
 	}
 
-	report, err := l.Parse(stdout.Bytes(), stderr.Bytes(), exitCode)
+	report, err := l.Parse(outBytes, errBytes, exitCode)
 	if err != nil {
 		return Report{}, err
 	}

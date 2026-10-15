@@ -306,7 +306,7 @@ func (s *Server) lint(ctx context.Context, job *lintJob) (linter.Report, error) 
 		if err != nil {
 			return linter.Report{}, err
 		}
-		report, err := l.Parse(out.Stdout, out.Stderr, out.ExitCode)
+		report, err := l.Parse(s.redact(out.Stdout), s.redact(out.Stderr), out.ExitCode)
 		if err != nil {
 			return linter.Report{}, err
 		}
@@ -315,7 +315,7 @@ func (s *Server) lint(ctx context.Context, job *lintJob) (linter.Report, error) 
 		}
 		return report, nil
 	}
-	return linter.RunContext(ctx, l, files, linter.Options{Dir: ws, Env: linter.ScrubbedEnv(l)})
+	return linter.RunContext(ctx, l, files, linter.Options{Dir: ws, Env: linter.ScrubbedEnv(l), Redact: s.redact})
 }
 
 func setupFailed(err error) *lintError {
