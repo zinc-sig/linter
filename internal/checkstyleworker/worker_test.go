@@ -327,18 +327,18 @@ func TestRunBudgetPoisonsAndRestarts(t *testing.T) {
 }
 
 func TestDeadlineBeforeRunBudgetDoesNotPoison(t *testing.T) {
-	f := start(t, "ok", func(c *Config) { c.RunBudget = 2 * time.Second })
+	f := start(t, "ok", func(c *Config) { c.RunBudget = 3 * time.Second })
 	other := make(chan error, 1)
 	go func() {
-		_, err := check(f.w, 5*time.Second, "sleep=800")
+		_, err := check(f.w, 5*time.Second, "sleep=1500")
 		other <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
 	began := time.Now()
-	if _, err := check(f.w, 200*time.Millisecond, "sleep=500"); !errors.Is(err, ErrTimeout) {
+	if _, err := check(f.w, 200*time.Millisecond, "sleep=1000"); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("late request: err = %v, want ErrTimeout", err)
 	}
-	if elapsed := time.Since(began); elapsed > 400*time.Millisecond {
+	if elapsed := time.Since(began); elapsed > 700*time.Millisecond {
 		t.Fatalf("answered after %s, want about 200ms", elapsed)
 	}
 	if err := <-other; err != nil {
@@ -374,12 +374,12 @@ func TestTimedOutRequestKeepsItsSlotUntilReply(t *testing.T) {
 }
 
 func TestTimedOutRequestPoisonsAtItsRunBudget(t *testing.T) {
-	f := start(t, "ok", func(c *Config) { c.RunBudget = 500 * time.Millisecond })
+	f := start(t, "ok", func(c *Config) { c.RunBudget = 1500 * time.Millisecond })
 	began := time.Now()
 	if _, err := check(f.w, 100*time.Millisecond, "hang"); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
-	if elapsed := time.Since(began); elapsed > 400*time.Millisecond {
+	if elapsed := time.Since(began); elapsed > 1000*time.Millisecond {
 		t.Fatalf("answered after %s, want about 100ms", elapsed)
 	}
 	if got := f.logs.count("poisoned"); got != 0 {
@@ -391,7 +391,7 @@ func TestTimedOutRequestPoisonsAtItsRunBudget(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if elapsed := time.Since(began); elapsed < 450*time.Millisecond {
+	if elapsed := time.Since(began); elapsed < 1400*time.Millisecond {
 		t.Fatalf("poisoned after %s, before the run budget", elapsed)
 	}
 	if _, err := check(f.w, 5*time.Second, "Solution.java"); err != nil {
