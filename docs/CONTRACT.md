@@ -572,9 +572,10 @@ environment, because whoever runs it by hand owns that environment.
 The scrubbing covers the tools' own environments only. `tini`, PID 1,
 runs as the same user and keeps the container's environment, readable at
 `/proc/1/environ`, so the container must carry no secret in its
-environment. Core passes the token as a file and sets no environment
-variables; on Kubernetes the pod sets `enableServiceLinks: false` so that
-no service variables are injected either.
+environment. Core therefore passes the token as a file, sets no
+environment variables, and on Kubernetes must set
+`enableServiceLinks: false` on the pod so that no service variables are
+injected either.
 
 ### 9.4 Cancellation
 
