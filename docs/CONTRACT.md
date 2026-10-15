@@ -191,7 +191,9 @@ value out of range) is a usage error.
 - **TCP.** Only with `--listen`, used on Kubernetes. Every request except
   `GET /healthz/live` and `GET /healthz/ready` must carry the header
   `X-Zinc-Linter-Token` whose value equals the token, compared in constant
-  time; a missing or different value answers `401 unauthorized`. The token
+  time; a missing or different value answers `401 unauthorized`. The check
+  runs before routing, so an unknown path or a wrong method without the
+  token also answers `401`, not `404` or `405`. The token
   travels in this header, not in `Authorization`, because the Kubernetes
   API server consumes `Authorization` on the `pods/proxy` path. The health
   endpoints are exempt so that kubelet probes, which cannot read a Secret,
@@ -214,7 +216,10 @@ value out of range) is a usage error.
 ### 7.3 Lifecycle and exit codes
 
 1. Parse flags, read the token file, create the cache and work
-   directories, bind the listeners. Any failure here exits.
+   directories, bind the listeners. Any failure here exits. Everything
+   inside `--cache-dir` and every `cobe-lint-ws-*` directory inside
+   `--work-dir` left by an earlier process is removed, and both
+   directories are checked for writability.
 2. Serve at once. Until ready, `GET /v1/manifest`, the asset endpoint and
    both health endpoints work, `POST /v1/lint` answers
    `503 linter_not_ready`, and `GET /healthz/ready` answers 503 `starting`.
@@ -483,10 +488,13 @@ a 503 after the first `200` means the container must be replaced
   Health and manifest requests never take a slot; uploads have their own
   limit (section 8.5).
 - The deadline starts when the request's headers have been read and
-  covers queueing, workspace setup, asset copying, the tool run and
-  parsing. When it passes, the request answers `504 timeout`.
+  covers reading the body, queueing, workspace setup, asset copying, the
+  tool run and parsing. When it passes, the request answers
+  `504 timeout`.
+- A one-shot tool's stdout and stderr are each capped at 16 MiB; a tool
+  that writes more is a `linter_execution_failed`.
 - Findings are truncated to `max_findings`, and each message to 4096
-  bytes, after the report is built.
+  bytes without splitting a UTF-8 sequence, after the report is built.
 
 ### 9.2 Workspace and asset cache
 
@@ -554,9 +562,19 @@ plus the driver's `linter.Enver` defaults (for `go vet`: `GOCACHE`,
 `GOPATH`, `GOTOOLCHAIN`, `GOPROXY`, `GOMAXPROCS`). No inherited variable
 reaches a tool, so neither the token, the token file path, nor anything
 the container runtime injected (such as Kubernetes service variables) can
-be included and echoed back by a student's source. Stdin is `/dev/null`.
+be included and echoed back by a student's source through the tool's own
+`/proc/self/environ`. Stdin is `/dev/null`. The version probes behind a
+report's `tool` string (for example `ruff --version`) get the same
+environment and run once per process.
 The one-shot CLI (`cobe-lint lint`) keeps inheriting its caller's
 environment, because whoever runs it by hand owns that environment.
+
+The scrubbing covers the tools' own environments only. `tini`, PID 1,
+runs as the same user and keeps the container's environment, readable at
+`/proc/1/environ`, so the container must carry no secret in its
+environment. Core passes the token as a file and sets no environment
+variables; on Kubernetes the pod sets `enableServiceLinks: false` so that
+no service variables are injected either.
 
 ### 9.4 Cancellation
 
