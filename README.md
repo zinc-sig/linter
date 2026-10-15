@@ -61,6 +61,10 @@ sets `target: py314` — no interpreter or virtualenv install behind it.
 - `/opt/checkstyle.jar`, `/opt/checkstyle-config.xml` — Checkstyle JAR and
   configuration (based on Google's Java Style Guide)
 - `/opt/java` — jlink'ed minimal Java runtime that runs checkstyle
+- `/opt/checkstyle-worker.jar`, `/opt/checkstyle-warmup/Warmup.java` — the
+  resident checkstyle worker `cobe-lint serve` keeps running for Java
+  lints, and its warm-up sample (source and Go supervisor in
+  `internal/checkstyleworker`; protocol in docs/CONTRACT.md Appendix A)
 - `/workspace` — working directory for lint runs
 
 The image runs as the non-root `linter` user.
@@ -97,7 +101,7 @@ re-published.
 ## Local build & test
 
 ```bash
-go vet ./... && go test ./...     # unit tests (parsers, CLI, manifest)
+go vet ./... && go test ./...     # unit tests (parsers, CLI, manifest, worker supervisor)
 docker build -t cobe-linter:dev .
 go test -tags conformance ./...   # image conformance (IMAGE=<tag> to override)
 ```

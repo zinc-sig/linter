@@ -602,13 +602,17 @@ threads.
   `503 linter_not_ready`. Java requests that arrive during a restart hold
   their worker slot and wait for the replacement until their deadline,
   then answer `504 timeout`.
-- **Terminal failure.** Restarts back off 1, 2, then 4 seconds. Three
-  consecutive starts that fail to answer the warm-up mark the worker
-  failed: Java lints answer `503 linter_not_ready` and `/healthz/ready`
-  answers `failed`.
-- **Budget.** The JVM runs with `-XX:+UseSerialGC -Xmx128m` (about 110 MB
-  resident and 13 threads idle, plus the pool threads). Every JVM thread
-  counts against the container's 256-pid limit.
+- **Terminal failure.** A start fails when the JVM does not answer the
+  warm-up with a report within 60 seconds of launch. A restart after a
+  warmed-up worker ends is immediate; after a failed start the next one
+  waits 1 second, then 2 seconds. The third consecutive failed start
+  marks the worker failed: Java lints answer `503 linter_not_ready` and
+  `/healthz/ready` answers `failed`.
+- **Budget.** The JVM runs with `-XX:+UseSerialGC -Xmx128m`. Measured on
+  two CPUs: about 105 MB resident and 13 JVM threads idle after the
+  warm-up, plus one thread per pool thread used, and about 150 MB resident
+  once the heap has grown under load. Every JVM thread counts against the
+  container's 256-pid limit.
 
 ## 10. `cobe-lint dial-stdio`
 
@@ -782,6 +786,33 @@ to its log.
   throws, for example on a source it cannot parse at all.
 - Exactly one reply per request, in any order. On stdin EOF the worker
   finishes the requests in flight and exits `0`.
+- Strings in replies escape every character outside printable ASCII as
+  `\uXXXX`, so a reply line is pure ASCII. The error text is the
+  exception's cause chain, one `class: message` per line, the lines after
+  the first prefixed `Caused by: `.
+- A reply whose `id` the server did not send (for example one for a
+  request the server already gave up on, from an earlier worker) is
+  logged and ignored. A line that is not JSON, lacks a positive `id`,
+  carries both or neither of `xml` and `error`, or is longer than 32 MiB
+  is not a valid reply.
+
+**Audit.** The worker loads the configuration as checkstyle's `Main`
+does (system properties expand `${...}`, modules with severity `ignore`
+are omitted) and runs each request the same way: a root module created
+through `PackageObjectFactory`, configured, given a fresh `XMLLogger`
+over an in-memory buffer, then `process(files)` and `destroy()`.
+`System.out` is pointed at stderr at startup, so nothing checkstyle
+prints can reach the reply stream.
+
+**Exit codes.** `0` after stdin EOF; `2` for bad arguments; `3` for a
+request line it cannot parse; `4` on `OutOfMemoryError`, without a
+reply, since the heap may be inconsistent; `5` when stdout is gone. Any
+exit is a restart for the server, and the requests in flight answer
+`503 linter_not_ready`.
+
+**Process.** The server starts the worker in its own process group with
+`/` as working directory and a parent-death signal of `SIGKILL`, and
+kills the whole group when it restarts or poisons the worker.
 
 **Mapping.** The server feeds a success reply to the existing checkstyle
 driver as `Parse(stdout = xml, stderr = nil, exitCode = 0)` and an error
