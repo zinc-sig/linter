@@ -255,7 +255,7 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 		}
 		reply, sent := p.send(files)
 		if !sent {
-			continue // died between await and send; wait for the next one
+			continue // died between await and send; await waits for the next one
 		}
 		budget := time.NewTimer(w.cfg.RunBudget)
 		out, settled, err := w.wait(ctx, p, reply, budget)
@@ -269,7 +269,8 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 	}
 }
 
-// await returns the serving JVM, waiting through a restart.
+// await returns the serving JVM, waiting through a restart. A JVM that
+// was killed but not yet reaped counts as restarting.
 func (w *Worker) await(ctx context.Context) (*process, error) {
 	for {
 		w.mu.Lock()
@@ -280,9 +281,11 @@ func (w *Worker) await(ctx context.Context) (*process, error) {
 			return nil, ErrClosed
 		case failErr != nil:
 			return nil, ErrFailed
-		case p != nil:
+		case p != nil && !p.isDead():
 			return p, nil
 		}
+		// changed was read together with current, so clearing a dead
+		// current closes it.
 		select {
 		case <-changed:
 		case <-ctx.Done():
@@ -609,6 +612,12 @@ func (p *process) kill(reason string) {
 	if !p.reaped {
 		killGroup(p.cmd.Process)
 	}
+}
+
+func (p *process) isDead() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.dead
 }
 
 func (p *process) cause() string {
