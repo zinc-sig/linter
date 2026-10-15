@@ -232,6 +232,11 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 		if err != nil {
 			return Output{}, err
 		}
+		// select picks at random among ready cases, so an expired request
+		// can get here; sending it would poison a healthy JVM.
+		if ctx.Err() != nil {
+			return Output{}, ctxErr(ctx)
+		}
 		reply, sent := p.send(files)
 		if !sent {
 			continue // died between await and send; wait for the next one

@@ -326,6 +326,24 @@ func TestDeadlinePoisonsAndRestarts(t *testing.T) {
 	}
 }
 
+func TestExpiredRequestIsNotSent(t *testing.T) {
+	f := start(t, "ok", nil)
+	for range 20 {
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		_, err := f.w.Check(ctx, []string{"/ws/Solution.java"})
+		cancel()
+		if !errors.Is(err, ErrTimeout) {
+			t.Fatalf("err = %v, want ErrTimeout", err)
+		}
+	}
+	if got := f.logs.count("poisoned"); got != 0 {
+		t.Fatalf("poison log lines = %d, want 0", got)
+	}
+	if got := f.starts(); got != 1 {
+		t.Fatalf("starts = %d, want 1", got)
+	}
+}
+
 func TestCancelledRequestWaitsForItsReply(t *testing.T) {
 	f := start(t, "ok", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
