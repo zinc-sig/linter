@@ -395,8 +395,10 @@ func TestAbandonedJavaHoldsSlotUntilReply(t *testing.T) {
 	c := newFakeChecker()
 	close(c.ready)
 	reply := make(chan struct{})
+	ctxErr := make(chan error, 1)
 	c.check = func(ctx context.Context, files []string) (checkstyleworker.Output, error) {
 		<-reply // ignores cancellation, as the real worker does once sent
+		ctxErr <- ctx.Err()
 		return checkstyleworker.Output{Stdout: []byte(files[0] + "|ok\n")}, nil
 	}
 	ts := startServer(t, serverOpts{
@@ -426,10 +428,20 @@ func TestAbandonedJavaHoldsSlotUntilReply(t *testing.T) {
 		t.Errorf("workspace removed before the reply: %v", entries)
 	}
 	close(reply)
+	if err := <-ctxErr; !errors.Is(err, context.Canceled) {
+		t.Errorf("request context at the reply = %v, want context.Canceled", err)
+	}
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && ts.pool.longestHold() != 0; time.Sleep(10 * time.Millisecond) {
 	}
 	if entries, _ := os.ReadDir(ts.cfg.WorkDir); len(entries) != 0 {
 		t.Errorf("workspace left after the reply: %v", entries)
+	}
+	// The slot is released before the handler returns and logs, so wait
+	// for the log line that shows the late result was discarded.
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && !strings.Contains(ts.logs.String(), `"abandoned":true`); time.Sleep(10 * time.Millisecond) {
+	}
+	if !strings.Contains(ts.logs.String(), `"abandoned":true`) {
+		t.Errorf("the late Java result was not discarded as abandoned:\n%s", ts.logs.String())
 	}
 }
 
