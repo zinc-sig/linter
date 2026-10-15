@@ -65,6 +65,22 @@ func TestNames(t *testing.T) {
 	}
 }
 
+func TestTool(t *testing.T) {
+	want := map[string]string{
+		"c": ToolClangTidy, "cpp11": ToolClangTidy, "cpp14": ToolClangTidy,
+		"go": ToolGoVet, "java": ToolCheckstyle,
+		"python312": ToolRuff, "python313": ToolRuff,
+	}
+	for _, l := range All() {
+		if got := Tool(l.Language()); got != want[l.Language()] {
+			t.Errorf("Tool(%q) = %q, want %q", l.Language(), got, want[l.Language()])
+		}
+	}
+	if got := Tool("klingon"); got != "" {
+		t.Errorf("Tool of an unknown key = %q, want empty", got)
+	}
+}
+
 func TestManifestVersion(t *testing.T) {
 	if v := ManifestVersion(); v != 1 {
 		t.Errorf("ManifestVersion = %d, want 1", v)
