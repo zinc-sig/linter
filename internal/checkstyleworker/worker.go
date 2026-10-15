@@ -139,6 +139,8 @@ type Worker struct {
 	failErr  error
 	closed   bool
 	gen      int
+	nextReq  uint64
+	inFlight map[uint64]time.Time // send time of each request on the JVM
 }
 
 // Start validates cfg and starts the supervisor, which launches and warms
@@ -175,13 +177,14 @@ func Start(cfg Config) (*Worker, error) {
 		cfg.Log = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
 	}
 	w := &Worker{
-		cfg:     cfg,
-		sem:     make(chan struct{}, cfg.Threads),
-		quit:    make(chan struct{}),
-		done:    make(chan struct{}),
-		changed: make(chan struct{}),
-		ready:   make(chan struct{}),
-		failed:  make(chan struct{}),
+		cfg:      cfg,
+		sem:      make(chan struct{}, cfg.Threads),
+		quit:     make(chan struct{}),
+		done:     make(chan struct{}),
+		changed:  make(chan struct{}),
+		ready:    make(chan struct{}),
+		failed:   make(chan struct{}),
+		inFlight: make(map[uint64]time.Time),
 	}
 	go w.supervise()
 	return w, nil
@@ -200,6 +203,34 @@ func (w *Worker) Err() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.failErr
+}
+
+// LongestInFlight is how long the oldest request still on the JVM was
+// sent ago, counting requests whose caller has already been answered, or
+// zero when none is. It grows without bound only when a poisoned JVM
+// cannot be reaped.
+func (w *Worker) LongestInFlight() time.Duration {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var longest time.Duration
+	for _, sent := range w.inFlight {
+		longest = max(longest, time.Since(sent))
+	}
+	return longest
+}
+
+func (w *Worker) track() uint64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.nextReq++
+	w.inFlight[w.nextReq] = time.Now()
+	return w.nextReq
+}
+
+func (w *Worker) untrack(id uint64) {
+	w.mu.Lock()
+	delete(w.inFlight, id)
+	w.mu.Unlock()
 }
 
 // Close stops the supervisor and kills the JVM; requests in flight return
@@ -257,13 +288,15 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 		if !sent {
 			continue // died between await and send; await waits for the next one
 		}
+		id := w.track()
 		budget := time.NewTimer(w.cfg.RunBudget)
 		out, settled, err := w.wait(ctx, p, reply, budget)
 		if settled {
 			budget.Stop()
+			w.untrack(id)
 		} else {
 			held = false
-			go w.finish(p, reply, budget)
+			go w.finish(p, reply, budget, id)
 		}
 		return out, err
 	}
@@ -328,8 +361,11 @@ func (w *Worker) wait(ctx context.Context, p *process, reply <-chan result, budg
 
 // finish holds the thread slot of a request whose caller has been
 // answered until the JVM replies or the run budget passes.
-func (w *Worker) finish(p *process, reply <-chan result, budget *time.Timer) {
-	defer func() { <-w.sem }()
+func (w *Worker) finish(p *process, reply <-chan result, budget *time.Timer, id uint64) {
+	defer func() {
+		w.untrack(id)
+		<-w.sem
+	}()
 	select {
 	case <-reply: // discarded
 		budget.Stop()

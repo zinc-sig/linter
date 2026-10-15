@@ -461,11 +461,13 @@ waits for a worker, the queue, or the checkstyle worker.
 
 - `200 {"status": "ok"}` while the server is responsive.
 - `503 {"status": "stuck", "reason": "..."}` when a worker slot has been
-  held by one request for more than three times `--deadline` (24 seconds
-  by default). One-shot tools are killed at the deadline and the
-  checkstyle worker is restarted once a request has run on it for
-  `--deadline` (sections 9.4 and 9.6), so only a process the kernel cannot
-  kill reaches this state.
+  held by one request, or a request has been on the checkstyle worker,
+  for more than three times `--deadline` (24 seconds by default). The
+  second case covers Java requests already answered with `504 timeout`,
+  which leave their worker slot but keep their checkstyle thread. One-shot
+  tools are killed at the deadline and the checkstyle worker is restarted
+  once a request has run on it for `--deadline` (sections 9.4 and 9.6), so
+  only a process the kernel cannot kill reaches this state.
 
 ### 8.7 `GET /healthz/ready`
 

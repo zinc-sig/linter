@@ -35,6 +35,9 @@ type Checker interface {
 	Failed() <-chan struct{}
 	Err() error
 	Close() error
+	// LongestInFlight is how long the oldest request still on the JVM was
+	// sent ago, including requests already answered with a timeout.
+	LongestInFlight() time.Duration
 }
 
 // Deps are the parts of the server that tests replace. Zero fields take

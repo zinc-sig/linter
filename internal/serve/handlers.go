@@ -107,12 +107,23 @@ func (s *Server) allow(w http.ResponseWriter, r *http.Request, method string) bo
 }
 
 func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	stuck := func(reason string) {
+		s.writeBody(w, r, http.StatusServiceUnavailable, map[string]string{"status": "stuck", "reason": reason})
+	}
 	if held := s.pool.longestHold(); held > 3*s.cfg.Deadline {
-		s.writeBody(w, r, http.StatusServiceUnavailable, map[string]string{
-			"status": "stuck",
-			"reason": fmt.Sprintf("a worker slot has been held for %d ms", held.Milliseconds()),
-		})
+		stuck(fmt.Sprintf("a worker slot has been held for %d ms", held.Milliseconds()))
 		return
+	}
+	// A Java request answered at its deadline leaves the pool but stays on
+	// the checkstyle worker until it replies or is killed.
+	s.checkerMu.Lock()
+	c := s.checker
+	s.checkerMu.Unlock()
+	if c != nil {
+		if held := c.LongestInFlight(); held > 3*s.cfg.Deadline {
+			stuck(fmt.Sprintf("a checkstyle request has been running for %d ms", held.Milliseconds()))
+			return
+		}
 	}
 	s.writeBody(w, r, http.StatusOK, map[string]string{"status": "ok"})
 }

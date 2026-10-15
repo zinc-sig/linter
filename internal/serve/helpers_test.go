@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -60,6 +61,7 @@ type fakeChecker struct {
 	check         func(ctx context.Context, files []string) (checkstyleworker.Output, error)
 	closeOnce     sync.Once
 	closed        chan struct{}
+	inFlight      atomic.Int64 // LongestInFlight in nanoseconds
 }
 
 func newFakeChecker() *fakeChecker {
@@ -72,6 +74,9 @@ func (c *fakeChecker) Check(ctx context.Context, files []string) (checkstylework
 func (c *fakeChecker) Ready() <-chan struct{}  { return c.ready }
 func (c *fakeChecker) Failed() <-chan struct{} { return c.failed }
 func (c *fakeChecker) Err() error              { return c.err }
+func (c *fakeChecker) LongestInFlight() time.Duration {
+	return time.Duration(c.inFlight.Load())
+}
 func (c *fakeChecker) Close() error {
 	c.closeOnce.Do(func() { close(c.closed) })
 	return nil

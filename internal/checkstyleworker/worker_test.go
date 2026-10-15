@@ -301,10 +301,11 @@ func TestCrashFailsInFlightAndRestarts(t *testing.T) {
 }
 
 func TestRunBudgetPoisonsAndRestarts(t *testing.T) {
-	f := start(t, "ok", func(c *Config) { c.RunBudget = 300 * time.Millisecond })
-	// Sent after the hanging request, so its own budget passes later.
+	f := start(t, "ok", func(c *Config) { c.RunBudget = time.Second })
+	// Sent well after the hanging request, so its own budget passes later,
+	// and well before that budget, so it is still on the poisoned JVM.
 	other := make(chan error, 1)
-	time.AfterFunc(100*time.Millisecond, func() {
+	time.AfterFunc(400*time.Millisecond, func() {
 		_, err := check(f.w, 5*time.Second, "sleep=3000")
 		other <- err
 	})
@@ -312,8 +313,8 @@ func TestRunBudgetPoisonsAndRestarts(t *testing.T) {
 	if _, err := check(f.w, 5*time.Second, "hang"); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("hanging request: err = %v, want ErrTimeout", err)
 	}
-	if elapsed := time.Since(began); elapsed > 2*time.Second {
-		t.Fatalf("timed out after %s, want about 300ms", elapsed)
+	if elapsed := time.Since(began); elapsed > 3*time.Second {
+		t.Fatalf("timed out after %s, want about 1s", elapsed)
 	}
 	if err := <-other; !errors.Is(err, ErrRestarted) {
 		t.Fatalf("other request in flight: err = %v, want ErrRestarted", err)
@@ -385,6 +386,12 @@ func TestTimedOutRequestPoisonsAtItsRunBudget(t *testing.T) {
 	if got := f.logs.count("poisoned"); got != 0 {
 		t.Fatalf("poisoned at the deadline: %d poison log lines", got)
 	}
+	// Answered, but still on the JVM.
+	first := f.w.LongestInFlight()
+	time.Sleep(50 * time.Millisecond)
+	if second := f.w.LongestInFlight(); first <= 0 || second <= first {
+		t.Fatalf("LongestInFlight = %s then %s, want a growing duration", first, second)
+	}
 	for f.logs.count("poisoned") == 0 {
 		if time.Since(began) > 5*time.Second {
 			t.Fatal("not poisoned 5s after the send")
@@ -399,6 +406,9 @@ func TestTimedOutRequestPoisonsAtItsRunBudget(t *testing.T) {
 	}
 	if got := f.starts(); got != 2 {
 		t.Fatalf("starts = %d, want 2", got)
+	}
+	if got := f.w.LongestInFlight(); got != 0 {
+		t.Fatalf("LongestInFlight = %s once nothing runs, want 0", got)
 	}
 }
 

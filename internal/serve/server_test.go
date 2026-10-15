@@ -468,6 +468,28 @@ func TestLivenessReportsStuckSlot(t *testing.T) {
 	}
 }
 
+func TestLivenessReportsStuckCheckstyleRequest(t *testing.T) {
+	c := newFakeChecker()
+	close(c.ready)
+	ts := startServer(t, serverOpts{
+		linters: []linter.Linter{fakeLinter{lang: "java"}},
+		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		checker: c,
+		tune:    func(c *Config) { c.Deadline = 100 * time.Millisecond },
+	})
+	c.inFlight.Store(int64(250 * time.Millisecond))
+	if r := do(t, ts.client, http.MethodGet, "http://linter/healthz/live", nil, nil); r.status != 200 {
+		t.Errorf("live within three deadlines: %d %s", r.status, r.body)
+	}
+	// No worker slot is held: the request was answered at its deadline
+	// and only the checkstyle worker still runs it.
+	c.inFlight.Store(int64(400 * time.Millisecond))
+	r := do(t, ts.client, http.MethodGet, "http://linter/healthz/live", nil, nil)
+	if r.status != 503 || !bytes.Contains(r.body, []byte(`"status":"stuck"`)) || !bytes.Contains(r.body, []byte("checkstyle request")) {
+		t.Errorf("live: %d %s", r.status, r.body)
+	}
+}
+
 func TestShutdownRemovesSocket(t *testing.T) {
 	ts := startServer(t, serverOpts{})
 	ts.stop()
