@@ -7,6 +7,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 COPY linter/ linter/
 COPY languages/ languages/
+COPY internal/ internal/
 COPY cmd/ cmd/
 # Toolchain pins live in languages/manifest.yaml (embedded into the CLI);
 # cmd/toolversions exports them for the runtime stage's install steps.
@@ -34,16 +35,22 @@ RUN . /opt/tool-versions.sh \
 
 # --- jre stage: minimal jlink'ed Java runtime for checkstyle ------------------
 # eclipse-temurin:21-jdk: a pinned, multi-arch (amd64+arm64) JDK shipping
-# jdeps/jlink; only the jlink'ed runtime below is copied onward, so the JDK
-# bulk never reaches the final image.
+# javac/jdeps/jlink; only the worker jar and the jlink'ed runtime below are
+# copied onward, so the JDK bulk never reaches the final image.
 FROM eclipse-temurin:21-jdk AS jre
 
 COPY --from=fetch /out/checkstyle.jar /checkstyle.jar
 
-# Derive the module set checkstyle actually uses, then build a stripped
-# runtime containing exactly those modules (output kept off /opt/java,
-# where this base image parks its own JDK).
-RUN jdeps --print-module-deps --ignore-missing-deps --multi-release 21 /checkstyle.jar > /modules \
+# The resident checkstyle worker `cobe-lint serve` runs (docs/CONTRACT.md
+# Appendix A), compiled against the pinned checkstyle jar.
+COPY internal/checkstyleworker/java/CheckstyleWorker.java /worker-src/CheckstyleWorker.java
+RUN javac --release 21 -proc:none -Xlint:all,-path -Werror -cp /checkstyle.jar -d /worker-classes /worker-src/CheckstyleWorker.java \
+    && jar --create --file /checkstyle-worker.jar -C /worker-classes .
+
+# Derive the module set checkstyle and the worker actually use, then build
+# a stripped runtime containing exactly those modules (output kept off
+# /opt/java, where this base image parks its own JDK).
+RUN jdeps --print-module-deps --ignore-missing-deps --multi-release 21 /checkstyle.jar /checkstyle-worker.jar > /modules \
     && echo "checkstyle modules: $(cat /modules)" \
     && jlink --add-modules "$(cat /modules)" \
     --strip-debug --no-header-files --no-man-pages --compress=zip-6 \
@@ -113,6 +120,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Minimal Java runtime and the checkstyle jar from the earlier stages.
 COPY --from=jre /jlinked /opt/java
 COPY --from=fetch /out/checkstyle.jar /opt/checkstyle.jar
+COPY --from=jre /checkstyle-worker.jar /opt/checkstyle-worker.jar
+COPY internal/checkstyleworker/java/Warmup.java /opt/checkstyle-warmup/Warmup.java
 
 # The pinned ruff binary — a self-contained native executable (the tool
 # venv it was installed into stays behind in the ruff stage) — at the
