@@ -362,8 +362,8 @@ plus a `serve` object:
   effective flag values and limits: `workers`, `queue`, `deadline_ms`
   (`--deadline` in milliseconds), `max_code_bytes` (the largest `code`,
   section 8.4), `max_findings` (the largest accepted `max_findings`),
-  and `cache_max_bytes`. Clients may log them and must not require exact
-  values.
+  and `cache_max_bytes`. Clients size their own limits from them (section
+  11.2) and must not reject a manifest because of their values.
 
 ### 8.4 `POST /v1/lint`
 
@@ -675,14 +675,16 @@ connection depends on the runtime.
   `IdleConnTimeout` 90 seconds), so a Docker exec is paid per connection,
   not per lint.
 - Do not queue in front of the server. Core holds at most
-  `workers + queue` lint requests in flight, taking a slot without
-  waiting and answering `busy` itself when none is free. This also bounds
-  the number of `dial-stdio` processes on Docker.
+  `serve.workers + serve.queue` lint requests in flight, read from the
+  manifest at startup, taking a slot without waiting and answering `busy`
+  itself when none is free. This also bounds the number of `dial-stdio`
+  processes on Docker.
 - Health probes use a transport separate from lint traffic and take no
   lint slot, so a saturated server is not mistaken for a dead one.
 - At startup, core polls `GET /v1/manifest` until it answers, checks
   `serve.protocol` (section 11.5), then polls `GET /healthz/ready` until
-  `200`. After that, the supervisor treats the container as unhealthy
+  `200`. A `failed` answer during startup ends the start attempt at once
+  instead of polling on. After that, the supervisor treats the container as unhealthy
   when `/healthz/live` fails or does not answer, or when `/healthz/ready`
   answers 503 (section 8.7), and replaces it.
 - Propagate the W3C trace context on every request.
