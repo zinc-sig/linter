@@ -112,6 +112,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     coreutils \
+    tini \
     && rm -rf /var/lib/apt/lists/* \
     /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale \
     /usr/lib/llvm-19/bin/c-index-test \
@@ -141,11 +142,22 @@ RUN . /opt/tool-versions.sh \
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# Unified linter CLI (docs/CONTRACT.md): `cobe-lint manifest` describes the
-# supported languages; `cobe-lint lint <language> <file>...` runs the native
-# tool and normalizes its output to the unified findings JSON.
+# Unified linter CLI (docs/CONTRACT.md): `cobe-lint serve` is the
+# container's HTTP lint server and `cobe-lint dial-stdio` bridges an exec
+# to its socket; `cobe-lint manifest` and `cobe-lint lint <language>
+# <file>...` stay for debugging and the conformance suite.
 COPY --from=build /out/cobe-lint /usr/local/bin/cobe-lint
 
-RUN mkdir -p /workspace && useradd -m -s /bin/false linter
+# /workspace holds serve's asset cache by default, so the linter user owns
+# it (core mounts a tmpfs over it).
+RUN mkdir -p /workspace && useradd -m -s /bin/false linter && chown linter:linter /workspace
+
+# The serve protocol this image implements (docs/CONTRACT.md section 7.4).
+LABEL org.zinc-sig.linter.serve-protocol="1"
 
 USER linter
+
+# tini runs as PID 1 and reaps the orphaned children of killed tools, which
+# would otherwise count against the container's pid limit.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/cobe-lint", "serve"]
