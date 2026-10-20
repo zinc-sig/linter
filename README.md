@@ -9,13 +9,39 @@ docker pull ghcr.io/zinc-sig/linter:latest
 ## Unified interface
 
 The image ships one static CLI, `/usr/local/bin/cobe-lint`, which implements
-the whole contract with [zinc-sig/core](https://github.com/zinc-sig/core):
-`cobe-lint manifest` prints the language manifest (language ids, display
-names, and lint commands), and `cobe-lint lint <language> <file> [<file>...]` runs the native
-tool and prints unified findings JSON — exit `0` means findings are data,
-non-zero means operational failure. Workspace filenames are core's
-deployment config, not the image's. [`docs/CONTRACT.md`](docs/CONTRACT.md)
-is the authoritative spec.
+the whole contract with [zinc-sig/core](https://github.com/zinc-sig/core).
+[`docs/CONTRACT.md`](docs/CONTRACT.md) is the authoritative spec.
+
+- `cobe-lint serve` is the container's main process (the image's default
+  command, under `tini`). It is an HTTP/1.1 JSON server on the unix socket
+  `/tmp/cobe-lint.sock`, plus an optional TCP listener that requires a
+  shared token (`--listen :8080 --token-file <path>`, used on Kubernetes).
+  Core sends `POST /v1/lint` with the language, filename and code and gets
+  the unified findings report back. The server lints with warm tools: a
+  resident checkstyle JVM for Java, a Go build cache warmed at startup,
+  and ruff or clang-tidy as one-shot processes in a fresh workspace per
+  request. It bounds concurrency with `--workers` and a short queue,
+  answers `busy` beyond that, enforces a per-request deadline (`8s`), keeps
+  a per-question asset cache (`PUT /v1/assets/...`), and reports
+  `/healthz/live` and `/healthz/ready`.
+- `cobe-lint dial-stdio` bridges its stdin and stdout to that socket. On
+  Docker, core opens each pooled connection as an exec of it, so a lint
+  costs no exec.
+- `cobe-lint manifest` prints the language manifest (language ids, display
+  names, and lint commands), and `cobe-lint lint <language> <file>
+  [<file>...]` runs the native tool once and prints unified findings JSON:
+  exit `0` means findings are data, non-zero means operational failure.
+  Both stay for debugging and the conformance suite.
+
+Workspace filenames are core's deployment config, not the image's.
+
+```bash
+# Run the server the way core does on Docker and lint through dial-stdio.
+docker run -d --name linter --network none cobe-linter:dev \
+  /usr/local/bin/cobe-lint serve --socket /tmp/cobe-lint.sock --workers 4
+printf 'GET /healthz/ready HTTP/1.1\r\nHost: linter\r\nConnection: close\r\n\r\n' \
+  | docker exec -i linter /usr/local/bin/cobe-lint dial-stdio
+```
 
 ## Image contents
 
@@ -61,9 +87,25 @@ sets `target: py314` — no interpreter or virtualenv install behind it.
 - `/opt/checkstyle.jar`, `/opt/checkstyle-config.xml` — Checkstyle JAR and
   configuration (based on Google's Java Style Guide)
 - `/opt/java` — jlink'ed minimal Java runtime that runs checkstyle
-- `/workspace` — working directory for lint runs
+- `/opt/checkstyle-worker.jar`, `/opt/checkstyle-warmup/Warmup.java` — the
+  resident checkstyle worker `cobe-lint serve` keeps running for Java
+  lints, and its warm-up sample (source and Go supervisor in
+  `internal/checkstyleworker`; protocol in docs/CONTRACT.md Appendix A)
+- `/usr/bin/tini` — the entrypoint; it runs as PID 1 and reaps the
+  orphaned children of killed tools
+- `/tmp/cobe-lint.sock` — the server's unix socket (`--socket`)
+- `/tmp/cobe-lint-ws-*` — per-request lint workspaces (`--work-dir`),
+  removed after each lint
+- `/workspace/lint-cache` — the per-question asset cache (`--cache-dir`),
+  emptied at every start
+- `/tmp/cobe-gocache` — the Go build cache `go vet` uses, warmed once at
+  startup
 
-The image runs as the non-root `linter` user.
+Source: the server in `internal/serve`, `dial-stdio` in
+`internal/dialstdio`, the checkstyle worker in `internal/checkstyleworker`.
+The image runs as the non-root `linter` user, and its label
+`org.zinc-sig.linter.serve-protocol` names the serve protocol it
+implements.
 
 ## Adding a language (fork guide)
 
@@ -97,7 +139,9 @@ re-published.
 ## Local build & test
 
 ```bash
-go vet ./... && go test ./...     # unit tests (parsers, CLI, manifest)
+go vet ./... && go test ./...     # unit tests (parsers, CLI, manifest, serve, dial-stdio, worker supervisor)
 docker build -t cobe-linter:dev .
 go test -tags conformance ./...   # image conformance (IMAGE=<tag> to override)
+# Java throughput through dial-stdio against a core-shaped container
+COBE_LINT_BENCH=1 go test -tags conformance -run TestServeJavaThroughput -v ./tests/
 ```

@@ -150,6 +150,8 @@ type registry struct {
 	version int
 	tools   map[string]string
 	linters []linter.Linter
+	// toolOf maps a language key to its driver id.
+	toolOf map[string]string
 }
 
 // parse decodes and validates a manifest document and builds one
@@ -176,7 +178,7 @@ func parse(data []byte) (*registry, error) {
 			return nil, fmt.Errorf("tool pin %s: %q is not a plain version string", tool, m.Tools[tool])
 		}
 	}
-	r := &registry{version: m.Version, tools: m.Tools}
+	r := &registry{version: m.Version, tools: m.Tools, toolOf: make(map[string]string, len(m.Languages))}
 	for _, key := range slices.Sorted(maps.Keys(m.Languages)) {
 		spec := m.Languages[key]
 		if !keyRE.MatchString(key) {
@@ -190,6 +192,7 @@ func parse(data []byte) (*registry, error) {
 			return nil, fmt.Errorf("language %q: %w", key, err)
 		}
 		r.linters = append(r.linters, l)
+		r.toolOf[key] = spec.Tool
 	}
 	return r, nil
 }
@@ -209,6 +212,22 @@ var load = sync.OnceValue(func() *registry {
 // Linter.Language() is the manifest key.
 func All() []linter.Linter {
 	return slices.Clone(load().linters)
+}
+
+// Tool driver ids a language's stanza can select, also the tool_id
+// stamped into its reports.
+const (
+	ToolRuff       = ruff.ToolID
+	ToolClangTidy  = clangtidy.ToolID
+	ToolCheckstyle = checkstyle.ToolID
+	ToolGoVet      = govet.ToolID
+)
+
+// Tool returns the driver id of a language key, or "" for an unknown key.
+// cobe-lint serve uses it to decide which tools need a resident worker or
+// a warm-up.
+func Tool(key string) string {
+	return load().toolOf[key]
 }
 
 // ManifestVersion is the manifest-schema version manifest.yaml declares,

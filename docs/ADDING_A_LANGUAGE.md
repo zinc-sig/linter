@@ -329,6 +329,10 @@ echo "hello"
 ```
 
 The dirty sample must trigger at least one finding; the clean one none.
+`tests/serve_test.go` lints the same samples through `cobe-lint serve`,
+over `dial-stdio` and over TCP, and expects exactly the report the
+one-shot CLI prints. A new language needs no serve-side code: serve runs
+its driver as a one-shot tool in a fresh workspace per request.
 
 ## 7. Run the gate
 
