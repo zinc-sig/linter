@@ -2,12 +2,29 @@
 
 This guide walks through adding a linter to the image from scratch, using
 **shellcheck for shell scripts** as the running example. Nothing here is
-registered in the repo — it is a template to copy. The steps:
+registered in the repo — it is a template to copy.
 
-1. [Implement `linter.Linter`](#1-implement-the-interface) in `languages/shell/`
-2. [Export the version pin](#2-export-the-version-pin) and teach `cmd/toolversions` about it
-3. [Install the tool](#3-install-the-tool-in-the-dockerfile) in the Dockerfile
-4. [Register the language](#4-register-the-language)
+A language is a stanza in [`languages/manifest.yaml`](../languages/manifest.yaml)
+binding a stable key and display name to a **tool driver**. When the tool
+already has a driver (ruff, clang-tidy, checkstyle, go vet), adding a
+language is *only* a stanza — e.g. python314 would be:
+
+```yaml
+python314:
+  name: Python 3.14
+  tool: ruff
+  with:
+    target: py314
+```
+
+plus the language tables in `languages/languages_test.go` (end of step 5)
+and conformance samples (step 6). Shellcheck is a new tool, so the full
+path is:
+
+1. [Implement the tool driver](#1-implement-the-tool-driver) in `languages/internal/shellcheck/`
+2. [Bind the driver](#2-bind-the-driver) in `languages/languages.go`
+3. [Declare the language and pin](#3-declare-the-language-and-pin-in-the-manifest) in `languages/manifest.yaml`
+4. [Install the tool](#4-install-the-tool-in-the-dockerfile) in the Dockerfile
 5. [Unit-test `Parse`](#5-unit-test-parse-on-inline-fixtures) on inline fixtures
 6. [Add conformance samples](#6-add-conformance-samples)
 7. [Run the gate](#7-run-the-gate)
@@ -23,7 +40,7 @@ Two things are deliberately **not** part of this repo's job:
 
 ## 0. Know your tool first
 
-Before writing code, answer for your linter what the existing languages
+Before writing code, answer for your linter what the existing drivers
 answer in their package docs:
 
 - **Machine-readable output?** shellcheck has `--format=json1`.
@@ -34,17 +51,23 @@ answer in their package docs:
   they must map onto the contract enum (`error`, `warning`, `convention`,
   `refactor`, `info`).
 - **Multiple files in one invocation?** shellcheck: yes (if your tool can
-  only take one file, loop inside your implementation and merge the
-  findings into one Report, documenting why).
+  only take one file, loop inside your driver and merge the findings into
+  one Report, documenting why).
 - **Version probing?** `shellcheck --version` prints `version: 0.10.0`.
 
-## 1. Implement the interface
+## 1. Implement the tool driver
 
-Create `languages/shell/shell.go`:
+Create `languages/internal/shellcheck/shellcheck.go`. A driver is
+parameterized by the manifest language key and display name (plus any
+per-language options its `with:` block declares — compare ruff's `target`
+and clang-tidy's `std`), so several manifest stanzas can share it:
 
 ```go
-// Package shell lints shell scripts with shellcheck.
-package shell
+// Package shellcheck is the shellcheck runner and JSON parser behind the
+// shell language. The shellcheck release is pinned in
+// languages/manifest.yaml; the shell dialect linted is decided per file
+// by its shebang (shellcheck's default).
+package shellcheck
 
 import (
 	"encoding/json"
@@ -53,10 +76,9 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
-// ShellcheckVersion is the shellcheck release installed into the image;
-// cmd/toolversions feeds it to the Dockerfile build. The shell dialect
-// linted is decided per file by its shebang (shellcheck's default).
-const ShellcheckVersion = "0.10.0"
+// ToolID is the stable tool identifier stamped into reports (contract
+// §2) and, by construction, the driver id manifest.yaml stanzas select.
+const ToolID = "shellcheck"
 
 // severityByLevel maps shellcheck levels onto the contract enum.
 var severityByLevel = map[string]string{
@@ -78,23 +100,29 @@ type output struct {
 	} `json:"comments"`
 }
 
-type shellcheck struct{}
+// Linter is a shellcheck-backed implementation of linter.Linter,
+// parameterized by manifest language key and display name.
+type Linter struct {
+	language string
+	name     string
+}
 
-// New returns the shell language implementation.
-func New() linter.Linter { return shellcheck{} }
+// New returns a shellcheck linter for the given language key and display
+// name.
+func New(language, name string) *Linter {
+	return &Linter{language: language, name: name}
+}
 
-func (shellcheck) Language() string { return "shell" }
-
-// Name is the display name served to UI/API surfaces.
-func (shellcheck) Name() string { return "Shell" }
+func (l *Linter) Language() string { return l.language }
+func (l *Linter) Name() string     { return l.name }
 
 // Command passes every file to one shellcheck invocation; findings carry
 // per-file paths.
-func (shellcheck) Command(files []string) []string {
+func (l *Linter) Command(files []string) []string {
 	return append([]string{"shellcheck", "--format=json1"}, files...)
 }
 
-func (shellcheck) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
+func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
 	// shellcheck exits 1 when it reports comments — that is data, not
 	// failure. Whatever the exit code, a parseable JSON document decides.
 	var doc output
@@ -121,8 +149,9 @@ func (shellcheck) Parse(stdout, stderr []byte, exitCode int) (linter.Report, err
 
 	return linter.Report{
 		Version:  linter.ReportVersion,
-		Language: "shell",
+		Language: l.language,
 		Tool:     linter.ToolVersion("shellcheck", `version:\s+(\S+)`, "shellcheck", "--version"),
+		ToolID:   ToolID,
 		Findings: findings,
 	}, nil
 }
@@ -137,33 +166,56 @@ Notes:
   paths given on the command line.
 - If your tool needs environment defaults (caches, offline switches),
   implement the optional `linter.Enver` interface — see
-  `languages/golang/golang.go` for a commented example.
+  `languages/internal/govet/govet.go` for a commented example.
 
-## 2. Export the version pin
+## 2. Bind the driver
 
-The `ShellcheckVersion` const above **is** the pin. Add it to
-`cmd/toolversions/main.go` so the Dockerfile can consume it:
+Teach the registry's `build` switch in
+[`languages/languages.go`](../languages/languages.go) about the new
+driver id — export a `ToolID` const from the driver (also stamped into
+its reports as `tool_id`) and switch on it. For an option-less tool:
 
 ```go
-import "github.com/zinc-sig/linter/languages/shell"
-
-// inside main():
-fmt.Printf("SHELLCHECK_VERSION='%s'\n", shell.ShellcheckVersion)
+case shellcheck.ToolID:
+	if !l.With.IsZero() {
+		return nil, fmt.Errorf("tool %q takes no with: options", l.Tool)
+	}
+	return shellcheck.New(key, l.Name), nil
 ```
 
-Tools that come from Debian's repositories (like clang-tidy) skip this step
-entirely — the base-image pin determines their version; say so in the
-package doc instead.
+A driver that needs per-language options instead declares its own options
+struct and decodes the `with:` block against it — see the `ruffOptions` /
+`clangtidyOptions` arms, which strictly decode via `decodeWith` (unknown
+keys rejected) and then validate the values. A manifest typo must fail at
+load, not at lint time.
 
-Languages sharing one tool follow a third pattern: the python<NN> packages
-all delegate to `languages/internal/ruff`, which pins the single ruff
-release once (each package re-exports it as `RuffVersion` for
-`cmd/toolversions`, since `internal` is out of cmd's import range), and
-each package selects its Python dialect purely via ruff's
-`--target-version` flag in `Command()` — one native binary, no per-version
-interpreters or virtualenvs to install.
+## 3. Declare the language and pin in the manifest
 
-## 3. Install the tool in the Dockerfile
+In [`languages/manifest.yaml`](../languages/manifest.yaml):
+
+```yaml
+languages:
+  shell:
+    name: Shell
+    tool: shellcheck
+
+tools:
+  shellcheck: "0.10.0"
+```
+
+The `tools:` entry **is** the version pin. Add its shell variable to the
+ordered list in `cmd/toolversions/main.go` so the Dockerfile can consume
+it:
+
+```go
+{"shellcheck", "SHELLCHECK_VERSION"},
+```
+
+Tools that come from Debian's repositories (like clang-tidy) skip the pin
+entirely — the base-image pin determines their version; say so in a
+manifest comment instead.
+
+## 4. Install the tool in the Dockerfile
 
 In the runtime stage, sourcing the generated pins (the release tarball
 needs `xz-utils` added to the apt install list):
@@ -178,38 +230,29 @@ RUN . /opt/tool-versions.sh \
 ```
 
 (Alternatively `apt-get install shellcheck` — then, as with clang-tidy,
-drop the const/toolversions entry and document that Debian determines the
-version.)
-
-## 4. Register the language
-
-The one line core-facing change, in `languages/languages.go`:
-
-```go
-import "github.com/zinc-sig/linter/languages/shell"
-
-// inside All():
-shell.New(),
-```
+drop the pin and document that Debian determines the version.)
 
 `cobe-lint manifest` now advertises
 `"shell": {"name": "Shell", "command": ["/usr/local/bin/cobe-lint", "lint", "shell"]}`
-and
-the conformance suite will demand fixtures for it.
+and the conformance suite will demand fixtures for it.
 
 ## 5. Unit-test Parse on inline fixtures
 
 Capture real tool output once (`docker run --rm -v "$PWD/dirty.sh:/workspace/dirty.sh:ro" -w /workspace <image> shellcheck --format=json1 dirty.sh; echo $?`)
-and inline it as consts in `languages/shell/shell_test.go`:
+and inline it as consts in
+`languages/internal/shellcheck/shellcheck_test.go`:
 
 ```go
-package shell
+package shellcheck
 
 import (
 	"testing"
 
 	"github.com/zinc-sig/linter/linter"
 )
+
+// newTest builds the driver exactly as the shell manifest stanza does.
+func newTest() *Linter { return New("shell", "Shell") }
 
 // Inline fixture: real shellcheck --format=json1 output captured from the
 // image; dirtyExitCode is the recorded exit status of that run.
@@ -218,7 +261,7 @@ const dirtyExitCode = 1
 const dirtyStdout = `{"comments":[{"file":"dirty.sh","line":2,"endLine":2,"column":1,"endColumn":7,"level":"warning","code":2034,"message":"unused appears unused. Verify use (or export if used externally).","fix":null}]}`
 
 func TestParseDirty(t *testing.T) {
-	report, err := New().Parse([]byte(dirtyStdout), nil, dirtyExitCode)
+	report, err := newTest().Parse([]byte(dirtyStdout), nil, dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -237,7 +280,7 @@ func TestParseDirty(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse([]byte(`{"comments":[]}`), nil, 0)
+	report, err := newTest().Parse([]byte(`{"comments":[]}`), nil, 0)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -247,15 +290,19 @@ func TestParseClean(t *testing.T) {
 }
 
 func TestParseGarbageIsOperationalFailure(t *testing.T) {
-	if _, err := New().Parse([]byte("not json"), nil, 2); err == nil {
+	if _, err := newTest().Parse([]byte("not json"), nil, 2); err == nil {
 		t.Fatal("Parse must fail on unparseable output")
 	}
 }
 ```
 
-Also cover your tool's edge cases the way the existing packages do:
+Also cover your tool's edge cases the way the existing drivers do:
 severity fallbacks, missing columns, the exit-code boundary (compare
-`languages/python313/python313_test.go` and `languages/c/c_test.go`).
+`languages/internal/ruff/ruff_test.go` and
+`languages/internal/clangtidy/clangtidy_test.go`). Finally, register the
+new language in `languages/languages_test.go`: its key in `TestRegistry`,
+its display name in `TestNames`, and its exact native argv in
+`TestNativeCommands` — that last table is what catches a manifest typo.
 
 ## 6. Add conformance samples
 

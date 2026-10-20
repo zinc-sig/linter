@@ -1,5 +1,9 @@
-// Package java lints Java sources with Checkstyle.
-package java
+// Package checkstyle is the Checkstyle runner and XML-report parser
+// behind the java language. The Checkstyle release itself is pinned in
+// languages/manifest.yaml (its grammar determines the Java language level
+// accepted); it runs on the jlink'ed minimal Java runtime the Dockerfile
+// builds.
+package checkstyle
 
 import (
 	"bytes"
@@ -11,11 +15,9 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
-// CheckstyleVersion is the Checkstyle release baked into the image;
-// cmd/toolversions feeds it to the Dockerfile build. Its grammar determines
-// the Java language level accepted (10.21.1 parses source up to Java 21); it
-// runs on the image's default-jre-headless (OpenJDK 21 on Debian 13).
-const CheckstyleVersion = "10.21.1"
+// ToolID is the stable tool identifier stamped into reports (contract
+// §2) and, by construction, the driver id manifest.yaml stanzas select.
+const ToolID = "checkstyle"
 
 const (
 	// javaPath is the jlink'ed minimal runtime built for the checkstyle
@@ -51,21 +53,27 @@ type xmlError struct {
 	Source   string `xml:"source,attr"`
 }
 
-type checkstyle struct{}
+// Linter is a checkstyle-backed implementation of linter.Linter,
+// parameterized by manifest language key and display name.
+type Linter struct {
+	language string
+	name     string
+}
 
-// New returns the java language implementation.
-func New() linter.Linter { return checkstyle{} }
+// New returns a checkstyle linter for the given language key and display
+// name.
+func New(language, name string) *Linter {
+	return &Linter{language: language, name: name}
+}
 
-func (checkstyle) Language() string { return "java" }
+func (l *Linter) Language() string { return l.language }
+func (l *Linter) Name() string     { return l.name }
 
-// Name is the display name served to UI/API surfaces.
-func (checkstyle) Name() string { return "Java" }
-
-func (checkstyle) Command(files []string) []string {
+func (l *Linter) Command(files []string) []string {
 	return append([]string{javaPath, "-jar", jarPath, "-c", configPath, "-f", "xml"}, files...)
 }
 
-func (checkstyle) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
+func (l *Linter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, error) {
 	// Checkstyle exits with the number of violations it found; the XML on
 	// stdout is the data. On a source it cannot parse at all it throws and
 	// emits no XML — an operational failure (contract §3). Isolate the
@@ -104,9 +112,9 @@ func (checkstyle) Parse(stdout, stderr []byte, exitCode int) (linter.Report, err
 	}
 	return linter.Report{
 		Version:  linter.ReportVersion,
-		Language: "java",
+		Language: l.language,
 		Tool:     tool,
-		ToolID:   "checkstyle",
+		ToolID:   ToolID,
 		Findings: findings,
 	}, nil
 }

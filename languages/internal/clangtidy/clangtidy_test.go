@@ -1,4 +1,4 @@
-package c
+package clangtidy
 
 import (
 	"slices"
@@ -8,16 +8,23 @@ import (
 	"github.com/zinc-sig/linter/linter"
 )
 
+// newTest builds the driver exactly as the c manifest stanza does; the
+// driver is standard-agnostic, so one standard exercises every path.
+func newTest() *Linter { return New("c", "C", "gnu17") }
+
 func TestMetadata(t *testing.T) {
-	l := New()
+	l := newTest()
 	if l.Language() != "c" {
 		t.Errorf("Language = %q", l.Language())
+	}
+	if l.Name() != "C" {
+		t.Errorf("Name = %q", l.Name())
 	}
 }
 
 func TestCommand(t *testing.T) {
-	got := New().Command([]string{"a.c", "b.c"})
-	want := []string{"clang-tidy", "a.c", "b.c", "--", "-std=" + CStandard}
+	got := newTest().Command([]string{"a.c", "b.c"})
+	want := []string{"clang-tidy", "a.c", "b.c", "--", "-std=gnu17"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Command = %v, want %v", got, want)
 	}
@@ -26,7 +33,7 @@ func TestCommand(t *testing.T) {
 // The dirty fixture contains one warning followed by two "note:" lines and
 // indented source-context lines — only the warning is a finding.
 func TestParseDirtySkipsNotes(t *testing.T) {
-	report, err := New().Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
+	report, err := newTest().Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -54,7 +61,7 @@ func TestParseDirtySkipsNotes(t *testing.T) {
 }
 
 func TestParseClean(t *testing.T) {
-	report, err := New().Parse(nil, nil, cleanExitCode)
+	report, err := newTest().Parse(nil, nil, cleanExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -66,7 +73,7 @@ func TestParseClean(t *testing.T) {
 // clang-tidy exits 1 on compile errors, but the diagnostics parse fine —
 // findings, not an operational failure.
 func TestParseCompileErrorIsFindings(t *testing.T) {
-	report, err := New().Parse([]byte(compileErrorStdout), []byte(compileErrorStderr), compileErrorExitCode)
+	report, err := newTest().Parse([]byte(compileErrorStdout), []byte(compileErrorStderr), compileErrorExitCode)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -82,7 +89,7 @@ func TestParseCompileErrorIsFindings(t *testing.T) {
 
 // A non-zero exit with no parseable diagnostics is an operational failure.
 func TestParseOperationalFailure(t *testing.T) {
-	if _, err := New().Parse(nil, []byte("Segmentation fault"), 139); err == nil {
+	if _, err := newTest().Parse(nil, []byte("Segmentation fault"), 139); err == nil {
 		t.Fatal("Parse must fail on a non-zero exit without diagnostics")
 	}
 }
@@ -91,7 +98,7 @@ func TestParseOperationalFailure(t *testing.T) {
 // no rule.
 func TestParseRemarkAndRuleless(t *testing.T) {
 	stdout := []byte("/w/a.c:1:2: remark: something\n/w/a.c:3:4: warning: bare warning\n")
-	report, err := New().Parse(stdout, nil, 0)
+	report, err := newTest().Parse(stdout, nil, 0)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -101,5 +108,17 @@ func TestParseRemarkAndRuleless(t *testing.T) {
 	}
 	if !slices.Equal(report.Findings, want) {
 		t.Errorf("findings = %+v, want %+v", report.Findings, want)
+	}
+}
+
+// The report carries whatever language key the driver was built with —
+// the same parser backs c, cpp11, and cpp14.
+func TestParseKeepsLanguageKey(t *testing.T) {
+	report, err := New("cpp11", "C++11", "gnu++11").Parse([]byte(dirtyStdout), []byte(dirtyStderr), dirtyExitCode)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if report.Language != "cpp11" {
+		t.Errorf("language = %q, want cpp11", report.Language)
 	}
 }
