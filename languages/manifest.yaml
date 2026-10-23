@@ -18,11 +18,12 @@ version: 1
 # Key = stable language identifier (lowercase, [a-z0-9_+-]+), served
 # verbatim as the manifest map key. Per language:
 #   name  (required)  human-readable display name for UI/API surfaces
-#   tool  (required)  driver id: ruff | clang-tidy | checkstyle | go vet
+#   tool  (required)  driver id: ruff | clang-tidy | javac | go vet
 #   with  (per tool)  the driver's own options block, validated against
 #                     the driver's schema (ruff: target, the
 #                     --target-version dialect; clang-tidy: std, the
-#                     -std= language standard); drivers without options
+#                     -std= language standard; javac: release, the
+#                     --release Java SE version); drivers without options
 #                     take no block at all
 languages:
   # gnu17 is clang 19's own default for C (probed in the image via
@@ -51,9 +52,14 @@ languages:
     name: Go
     tool: go vet
 
+  # javac checks syntax and types against the Java SE API of the release,
+  # as the grading container's JDK compiles it; another Java version is a
+  # stanza such as java17 with release "17".
   java:
     name: Java
-    tool: checkstyle
+    tool: javac
+    with:
+      release: "11"
 
   # Every python<NN> line shares the image's single pinned ruff binary and
   # differs only in the dialect ruff checks against — adding e.g. python314
@@ -72,15 +78,13 @@ languages:
 
 # Toolchain install pins, consumed by the Dockerfile build via
 # cmd/toolversions — bump a pin by editing it here. clang-tidy has no pin:
-# Debian 13's repositories determine its release (currently LLVM 19).
+# Debian 13's repositories determine its release (currently LLVM 19), and
+# javac none: it is the compiler of the image's eclipse-temurin:21-jdk
+# stage.
 tools:
   # One native ruff binary behind every python<NN> language, installed by
   # a pinned uv.
   ruff: "0.15.21"
-  # Checkstyle's grammar determines the Java language level accepted
-  # (10.21.1 parses source up to Java 21); it runs on the image's
-  # jlink'ed minimal Java 21 runtime.
-  checkstyle: "10.21.1"
   # Pins both the vet binary and the Go language version its typechecker
   # assumes for bare files.
   go: "1.24.0"

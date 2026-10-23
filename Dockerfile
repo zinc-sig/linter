@@ -17,44 +17,35 @@ COPY cmd/ cmd/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cobe-lint ./cmd/cobe-lint \
     && go run ./cmd/toolversions > /out/tool-versions.sh
 
-# --- fetch stage: checkstyle jar (used by the jre and runtime stages) --------
-FROM debian:13-slim AS fetch
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=build /out/tool-versions.sh /opt/tool-versions.sh
-
-# hadolint ignore=SC1091
-RUN . /opt/tool-versions.sh \
-    && mkdir -p /out \
-    && curl -fsSL "https://github.com/checkstyle/checkstyle/releases/download/checkstyle-${CHECKSTYLE_VERSION}/checkstyle-${CHECKSTYLE_VERSION}-all.jar" \
-    -o /out/checkstyle.jar
-
-# --- jre stage: minimal jlink'ed Java runtime for checkstyle ------------------
+# --- jre stage: minimal jlink'ed Java runtime holding the compiler ----------
 # eclipse-temurin:21-jdk: a pinned, multi-arch (amd64+arm64) JDK shipping
-# javac/jdeps/jlink; only the worker jar and the jlink'ed runtime below are
-# copied onward, so the JDK bulk never reaches the final image.
+# javac/jlink; only the worker jar and the jlink'ed runtime below are
+# copied onward, so the JDK bulk never reaches the final image. Its javac
+# is the Java linter: a JDK bump moves the compiler, and the --release
+# versions it supports, with it.
 FROM eclipse-temurin:21-jdk AS jre
 
-COPY --from=fetch /out/checkstyle.jar /checkstyle.jar
+# The javac worker (docs/CONTRACT.md Appendix A). It uses javac's task pool
+# and platform provider, which jdk.compiler does not export: it is
+# compiled with --add-exports (which --release does not allow, hence
+# -source/-target) and its jar manifest carries the same exports for
+# `java -jar`.
+COPY internal/javacworker/java/JavacWorker.java /worker-src/JavacWorker.java
+RUN javac -source 21 -target 21 -proc:none -Xlint:all,-path,-options -Werror \
+    --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
+    --add-exports jdk.compiler/com.sun.tools.javac.platform=ALL-UNNAMED \
+    -d /worker-classes /worker-src/JavacWorker.java \
+    && printf 'Main-Class: JavacWorker\nAdd-Exports: jdk.compiler/com.sun.tools.javac.api jdk.compiler/com.sun.tools.javac.platform\n' > /worker.mf \
+    && jar --create --file /javac-worker.jar --manifest /worker.mf -C /worker-classes .
 
-# The resident checkstyle worker `cobe-lint serve` runs (docs/CONTRACT.md
-# Appendix A), compiled against the pinned checkstyle jar.
-COPY internal/checkstyleworker/java/CheckstyleWorker.java /worker-src/CheckstyleWorker.java
-RUN javac --release 21 -proc:none -Xlint:all,-path -Werror -cp /checkstyle.jar -d /worker-classes /worker-src/CheckstyleWorker.java \
-    && jar --create --file /checkstyle-worker.jar -C /worker-classes .
-
-# Derive the module set checkstyle and the worker actually use, then build
-# a stripped runtime containing exactly those modules (output kept off
-# /opt/java, where this base image parks its own JDK).
-RUN jdeps --print-module-deps --ignore-missing-deps --multi-release 21 /checkstyle.jar /checkstyle-worker.jar > /modules \
-    && echo "checkstyle modules: $(cat /modules)" \
-    && jlink --add-modules "$(cat /modules)" \
+# A stripped runtime with the compiler (output kept off /opt/java, where
+# this base image parks its own JDK). jdk.compiler carries lib/ct.sym, the
+# API signatures of every --release version; jdk.zipfs is the file system
+# javac opens ct.sym with, a service that jlink does not add by itself.
+RUN jlink --add-modules java.compiler,jdk.compiler,jdk.zipfs \
     --strip-debug --no-header-files --no-man-pages --compress=zip-6 \
-    --output /jlinked
+    --output /jlinked \
+    && test -f /jlinked/lib/ct.sym
 
 # --- ruff stage: pinned ruff binary for the python<NN> languages -------------
 # Runs in its own stage so uv, its install scratch, and the tool venv never
@@ -88,11 +79,11 @@ RUN . /opt/tool-versions.sh \
 # clang-tidy toolchain. No Python interpreter ships at all — ruff is a
 # native binary and each python<NN> package selects its dialect via
 # --target-version — and Java doesn't come from Debian either (the jre
-# stage jlinks a minimal runtime for checkstyle).
+# stage jlinks a minimal runtime holding javac).
 FROM debian:13-slim
 
 LABEL org.opencontainers.image.source="https://github.com/zinc-sig/linter" \
-      org.opencontainers.image.description="Multi-language linter image (ruff, checkstyle, clang-tidy, go vet) for COBE sandbox lint runs"
+      org.opencontainers.image.description="Multi-language linter image (ruff, javac, clang-tidy, go vet) for COBE sandbox lint runs"
 
 # Fail piped RUNs (curl | tar) on the producer side too, not just the consumer.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -118,18 +109,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     /usr/lib/llvm-19/bin/c-index-test \
     /usr/lib/*-linux-gnu/libclang-19.so*
 
-# Minimal Java runtime and the checkstyle jar from the earlier stages.
+# Minimal Java runtime and the javac worker from the jre stage.
 COPY --from=jre /jlinked /opt/java
-COPY --from=fetch /out/checkstyle.jar /opt/checkstyle.jar
-COPY --from=jre /checkstyle-worker.jar /opt/checkstyle-worker.jar
-COPY internal/checkstyleworker/java/Warmup.java /opt/checkstyle-warmup/Warmup.java
+COPY --from=jre /javac-worker.jar /opt/javac-worker.jar
+COPY internal/javacworker/java/Warmup.java /opt/javac-warmup/Warmup.java
 
 # The pinned ruff binary — a self-contained native executable (the tool
 # venv it was installed into stays behind in the ruff stage) — at the
 # stable path languages/internal/ruff references.
 COPY --from=ruff /opt/uv-tools/ruff/bin/ruff /usr/local/bin/ruff
-
-COPY checkstyle-config.xml /opt/checkstyle-config.xml
 
 ARG TARGETARCH
 # `go vet` rebuilds stdlib export data from source, so src/ and pkg/ must

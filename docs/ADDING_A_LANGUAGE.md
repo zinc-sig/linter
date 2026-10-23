@@ -6,7 +6,7 @@ registered in the repo — it is a template to copy.
 
 A language is a stanza in [`languages/manifest.yaml`](../languages/manifest.yaml)
 binding a stable key and display name to a **tool driver**. When the tool
-already has a driver (ruff, clang-tidy, checkstyle, go vet), adding a
+already has a driver (ruff, clang-tidy, javac, go vet), adding a
 language is *only* a stanza — e.g. python314 would be:
 
 ```yaml

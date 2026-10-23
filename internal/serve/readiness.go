@@ -8,9 +8,9 @@ import (
 // Components that warm up before the server is ready (contract section
 // 8.7), in the order /healthz/ready lists them.
 const (
-	componentWorkers    = "workers"
-	componentCheckstyle = "checkstyle"
-	componentGoWarmup   = "go-warmup"
+	componentWorkers  = "workers"
+	componentJavac    = "javac"
+	componentGoWarmup = "go-warmup"
 )
 
 // readiness tracks startup and terminal failure. Ready is monotone: once

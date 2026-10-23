@@ -19,9 +19,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/zinc-sig/linter/languages/internal/checkstyle"
 	"github.com/zinc-sig/linter/languages/internal/clangtidy"
 	"github.com/zinc-sig/linter/languages/internal/govet"
+	"github.com/zinc-sig/linter/languages/internal/javac"
 	"github.com/zinc-sig/linter/languages/internal/ruff"
 	"github.com/zinc-sig/linter/linter"
 )
@@ -63,6 +63,12 @@ type clangtidyOptions struct {
 	Std string `yaml:"std"`
 }
 
+// javacOptions is the with: block a tool: javac stanza owns.
+type javacOptions struct {
+	// Release is the --release Java SE version, e.g. 11.
+	Release string `yaml:"release"`
+}
+
 // decodeWith strictly decodes a stanza's with: block into the driver's
 // options struct — an unknown key fails here, so a foreign or misspelled
 // option never reaches a driver. An absent block leaves the zero value
@@ -90,8 +96,9 @@ var keyRE = regexp.MustCompile(`^[a-z0-9_+-]+$`)
 // splice into native argv, so a dialect typo (py3.14, "gnu 17") fails at
 // load instead of as an operational failure on every lint run.
 var (
-	targetRE = regexp.MustCompile(`^py\d+$`)
-	stdRE    = regexp.MustCompile(`^[a-z0-9+.]+$`)
+	targetRE  = regexp.MustCompile(`^py\d+$`)
+	stdRE     = regexp.MustCompile(`^[a-z0-9+.]+$`)
+	releaseRE = regexp.MustCompile(`^[1-9]\d*$`)
 )
 
 // pinRE constrains tools: pin values: cmd/toolversions splices them into
@@ -129,11 +136,18 @@ func build(key string, l language) (linter.Linter, error) {
 			return nil, fmt.Errorf("with.std %q is not a -std= value (want e.g. gnu++11)", opts.Std)
 		}
 		return clangtidy.New(key, l.Name, opts.Std), nil
-	case checkstyle.ToolID:
-		if !l.With.IsZero() {
-			return nil, fmt.Errorf("tool %q takes no with: options", l.Tool)
+	case javac.ToolID:
+		var opts javacOptions
+		if err := decodeWith(l.With, &opts); err != nil {
+			return nil, err
 		}
-		return checkstyle.New(key, l.Name), nil
+		if opts.Release == "" {
+			return nil, fmt.Errorf("tool javac requires with.release (a --release Java SE version such as \"11\")")
+		}
+		if !releaseRE.MatchString(opts.Release) {
+			return nil, fmt.Errorf("with.release %q is not a Java SE version (want e.g. \"11\")", opts.Release)
+		}
+		return javac.New(key, l.Name, opts.Release), nil
 	case govet.ToolID:
 		if !l.With.IsZero() {
 			return nil, fmt.Errorf("tool %q takes no with: options", l.Tool)
@@ -141,7 +155,7 @@ func build(key string, l language) (linter.Linter, error) {
 		return govet.New(key, l.Name), nil
 	default:
 		return nil, fmt.Errorf("unknown tool %q (supported: %s, %s, %s, %s)",
-			l.Tool, ruff.ToolID, clangtidy.ToolID, checkstyle.ToolID, govet.ToolID)
+			l.Tool, ruff.ToolID, clangtidy.ToolID, javac.ToolID, govet.ToolID)
 	}
 }
 
@@ -217,10 +231,10 @@ func All() []linter.Linter {
 // Tool driver ids a language's stanza can select, also the tool_id
 // stamped into its reports.
 const (
-	ToolRuff       = ruff.ToolID
-	ToolClangTidy  = clangtidy.ToolID
-	ToolCheckstyle = checkstyle.ToolID
-	ToolGoVet      = govet.ToolID
+	ToolRuff      = ruff.ToolID
+	ToolClangTidy = clangtidy.ToolID
+	ToolJavac     = javac.ToolID
+	ToolGoVet     = govet.ToolID
 )
 
 // Tool returns the driver id of a language key, or "" for an unknown key.

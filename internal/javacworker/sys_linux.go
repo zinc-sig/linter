@@ -1,4 +1,4 @@
-package checkstyleworker
+package javacworker
 
 import (
 	"os"

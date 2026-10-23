@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zinc-sig/linter/internal/checkstyleworker"
+	"github.com/zinc-sig/linter/internal/javacworker"
 	"github.com/zinc-sig/linter/languages"
 	"github.com/zinc-sig/linter/linter"
 )
@@ -148,27 +148,27 @@ func TestTokenIsRedactedBeforeTruncation(t *testing.T) {
 	pad := func(n int, c string) string { return strings.Repeat(c, n) }
 	c := newFakeChecker()
 	close(c.ready)
-	var javaOut checkstyleworker.Output
-	c.check = func(context.Context, []string) (checkstyleworker.Output, error) { return javaOut, nil }
+	var javaOut javacworker.Output
+	c.check = func(context.Context, javacworker.Request) (javacworker.Output, error) { return javaOut, nil }
 	ts := startServer(t, serverOpts{
 		linters: []linter.Linter{
 			fakeLinter{lang: "message", script: `printf '%s' ` + pad(4070, "a") + `; cat ` + tokenFile + `; echo`},
 			fakeLinter{lang: "stderr", script: `{ printf '%s' ` + pad(1960, "b") + `; cat ` + tokenFile + `; } >&2; exit 42`},
 			fakeLinter{lang: "java"},
 		},
-		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		toolOf:  map[string]string{"java": languages.ToolJavac},
 		checker: c,
 		tune:    func(c *Config) { c.Listen, c.TokenFile = "127.0.0.1:0", tokenFile },
 	})
 	cases := []struct {
 		name, lang string
-		javaOut    checkstyleworker.Output
+		javaOut    javacworker.Output
 		status     int
 	}{
-		{"finding message", "message", checkstyleworker.Output{}, 200},
-		{"stderr snippet", "stderr", checkstyleworker.Output{}, 500},
-		{"java finding message", "java", checkstyleworker.Output{Stdout: []byte(pad(4070, "a") + testToken + "\n")}, 200},
-		{"java stderr snippet", "java", checkstyleworker.Output{Stderr: []byte(pad(1960, "b") + testToken), ExitCode: 42}, 500},
+		{"finding message", "message", javacworker.Output{}, 200},
+		{"stderr snippet", "stderr", javacworker.Output{}, 500},
+		{"java finding message", "java", javacworker.Output{Stdout: []byte(pad(4070, "a") + testToken + "\n")}, 200},
+		{"java stderr snippet", "java", javacworker.Output{Stderr: []byte(pad(1960, "b") + testToken), ExitCode: 42}, 500},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

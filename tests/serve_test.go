@@ -284,7 +284,6 @@ func TestServeThroughDialStdio(t *testing.T) {
 		}{
 			{map[string]any{"language": "klingon", "filename": "a.k", "code": ""}, "unsupported_language"},
 			{map[string]any{"language": "python313", "filename": "../a.py", "code": ""}, "filename_invalid"},
-			{map[string]any{"language": "java", "filename": "Broken.java", "code": "public class Broken {\n"}, "linter_execution_failed"},
 		}
 		for _, tc := range cases {
 			_, body := s.lint(t, tc.req)
@@ -324,6 +323,63 @@ func TestServeAssets(t *testing.T) {
 	delete(req, "assets")
 	if _, body := s.lint(t, req); !bytes.Contains(body, []byte("'helper.h' file not found")) {
 		t.Errorf("without assets the header must be missing: %s", body)
+	}
+}
+
+// TestServeJavaWorkspace lints Java through the resident javac worker: a
+// syntax error is a finding, the provided sources of the asset set
+// resolve, and nothing one lint compiled is visible to the next.
+func TestServeJavaWorkspace(t *testing.T) {
+	s := serveViaExec(t)
+	status, body := s.lint(t, map[string]any{"language": "java", "filename": "Broken.java", "code": "public class Broken {\n"})
+	if status != 200 || !bytes.Contains(body, []byte("compiler.err.premature.eof")) {
+		t.Errorf("syntax error: %d %s", status, body)
+	}
+
+	upload := func(key, fp string, files map[string]string) {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		for name, content := range files {
+			tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(content))})
+			tw.Write([]byte(content))
+		}
+		tw.Close()
+		if status, body := s.do(t, http.MethodPut, "/v1/assets/"+key+"/"+fp, buf.Bytes()); status != 204 {
+			t.Fatalf("upload %s: %d %s", key, status, body)
+		}
+	}
+	fpA, fpB := strings.Repeat("aa", 32), strings.Repeat("bb", 32)
+	upload("java-a", fpA, map[string]string{
+		"src/app/Main.java": "package app;\npublic class Main {\n    public static void main(String[] a) {\n        System.out.println(new Solution().f());\n    }\n}\n",
+		"src/app/Util.java": "package app;\nclass Util {\n    static int k() {\n        return 3;\n    }\n}\n",
+		// A copy of the student class elsewhere is the sibling's duplicate.
+		"reference/app/Solution.java": "package app;\npublic class Solution {\n    public int f() {\n        return 0;\n    }\n}\n",
+	})
+	upload("java-b", fpB, map[string]string{
+		"src/app/Main.java": "package app;\npublic class Main {\n}\n",
+	})
+	code := "package app;\npublic class Solution {\n    public int f() {\n        return Util.k();\n    }\n}\n"
+	lint := func(key, fp string) []byte {
+		req := map[string]any{"language": "java", "filename": "src/app/Solution.java", "code": code}
+		if key != "" {
+			req["assets"] = map[string]string{"cache_key": key, "fingerprint": fp}
+		}
+		status, body := s.lint(t, req)
+		if status != 200 {
+			t.Fatalf("lint with %q: %d %s", key, status, body)
+		}
+		return body
+	}
+	for range 3 {
+		if body := lint("java-a", fpA); bytes.Contains(body, []byte(`"severity"`)) {
+			t.Errorf("Util is a provided source, so nothing is wrong: %s", body)
+		}
+		if body := lint("java-b", fpB); !bytes.Contains(body, []byte("compiler.err.cant.resolve")) {
+			t.Errorf("Util from the other asset set must not resolve: %s", body)
+		}
+		if body := lint("", ""); !bytes.Contains(body, []byte("compiler.err.cant.resolve")) {
+			t.Errorf("Util from an earlier lint must not resolve without assets: %s", body)
+		}
 	}
 }
 

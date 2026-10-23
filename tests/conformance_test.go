@@ -164,14 +164,15 @@ const javaClean = `public class Solution {
 }
 `
 
-// star import and braceless if -> checkstyle AvoidStarImport + NeedBraces
-const javaDirty = `import java.util.*;
+// a Java 16 library call and a type error -> javac cant.resolve +
+// prob.found.req under --release 11
+const javaDirty = `import java.util.List;
 
 public class Solution {
     public static void main(String[] args) {
-        if (args.length > 0)
-            System.out.println(args[0]);
-        System.out.println("hello");
+        List<String> words = List.of(args).stream().toList();
+        int count = words;
+        System.out.println(count);
     }
 }
 `
