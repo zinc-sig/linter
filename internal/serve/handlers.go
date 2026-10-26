@@ -115,13 +115,13 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A Java request answered at its deadline leaves the pool but stays on
-	// the checkstyle worker until it replies or is killed.
+	// the javac worker until it replies or is killed.
 	s.checkerMu.Lock()
 	c := s.checker
 	s.checkerMu.Unlock()
 	if c != nil {
 		if held := c.LongestInFlight(); held > 3*s.cfg.Deadline {
-			stuck(fmt.Sprintf("a checkstyle request has been running for %d ms", held.Milliseconds()))
+			stuck(fmt.Sprintf("a javac request has been running for %d ms", held.Milliseconds()))
 			return
 		}
 	}

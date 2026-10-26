@@ -17,7 +17,7 @@ import (
 // TestServeJavaThroughput measures Java lints end to end through
 // dial-stdio against a container started the way core starts it. It is
 // opt-in: set COBE_LINT_BENCH=1. CPU is the container cgroup's usage, so
-// it includes the server, the checkstyle JVM and the dial-stdio processes.
+// it includes the server, the javac JVM and the dial-stdio processes.
 func TestServeJavaThroughput(t *testing.T) {
 	if os.Getenv("COBE_LINT_BENCH") == "" {
 		t.Skip("set COBE_LINT_BENCH=1 to run the throughput measurement")

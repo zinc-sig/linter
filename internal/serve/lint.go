@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/zinc-sig/linter/internal/checkstyleworker"
+	"github.com/zinc-sig/linter/internal/javacworker"
 	"github.com/zinc-sig/linter/languages"
 	"github.com/zinc-sig/linter/linter"
 )
@@ -141,12 +141,12 @@ func (s *Server) lintFailed(w http.ResponseWriter, r *http.Request, ctx context.
 		info(r).abandoned = true
 		return
 	case errors.As(err, &lerr):
-	case errors.Is(err, checkstyleworker.ErrTimeout), errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case errors.Is(err, javacworker.ErrTimeout), errors.Is(ctx.Err(), context.DeadlineExceeded):
 		lerr = &lintError{http.StatusGatewayTimeout, "timeout", "The lint did not finish within its deadline.", ""}
-	case errors.Is(err, checkstyleworker.ErrRestarted):
-		lerr = &lintError{http.StatusServiceUnavailable, "linter_not_ready", "The checkstyle worker restarted during the lint.", ""}
-	case errors.Is(err, checkstyleworker.ErrFailed), errors.Is(err, checkstyleworker.ErrClosed):
-		lerr = &lintError{http.StatusServiceUnavailable, "linter_not_ready", "The checkstyle worker is not available.", ""}
+	case errors.Is(err, javacworker.ErrRestarted):
+		lerr = &lintError{http.StatusServiceUnavailable, "linter_not_ready", "The javac worker restarted during the lint.", ""}
+	case errors.Is(err, javacworker.ErrFailed), errors.Is(err, javacworker.ErrClosed):
+		lerr = &lintError{http.StatusServiceUnavailable, "linter_not_ready", "The javac worker is not available.", ""}
 	default:
 		lerr = &lintError{http.StatusInternalServerError, "linter_execution_failed", "The linter failed.", err.Error()}
 	}
@@ -270,8 +270,8 @@ func (s *Server) lint(ctx context.Context, job *lintJob) (linter.Report, error) 
 		return linter.Report{}, setupFailed(err)
 	}
 	// A one-shot tool has exited by the time this runs. A Java request
-	// that passed its deadline may still be on the checkstyle worker, which
-	// may then find the file gone; its reply is discarded anyway.
+	// that passed its deadline may still be on the javac worker, which may
+	// then find its files gone; its reply is discarded anyway.
 	defer os.RemoveAll(ws)
 
 	if job.fingerprint != "" {
@@ -295,14 +295,22 @@ func (s *Server) lint(ctx context.Context, job *lintJob) (linter.Report, error) 
 
 	files := []string{job.filename}
 	l := job.linter
-	if s.deps.ToolOf(l.Language()) == languages.ToolCheckstyle {
+	if s.deps.ToolOf(l.Language()) == languages.ToolJavac {
 		s.checkerMu.Lock()
 		c := s.checker
 		s.checkerMu.Unlock()
 		if c == nil {
-			return linter.Report{}, checkstyleworker.ErrFailed
+			return linter.Report{}, javacworker.ErrFailed
 		}
-		out, err := c.Check(ctx, []string{filepath.Join(ws, filepath.FromSlash(job.filename))})
+		rel, ok := l.(interface{ Release() string })
+		if !ok {
+			return linter.Report{}, fmt.Errorf("language %s uses javac but names no release", l.Language())
+		}
+		out, err := c.Check(ctx, javacworker.Request{
+			Release: rel.Release(),
+			Dir:     ws,
+			Files:   []string{filepath.Join(ws, filepath.FromSlash(job.filename))},
+		})
 		if err != nil {
 			return linter.Report{}, err
 		}

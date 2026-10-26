@@ -18,7 +18,7 @@ the whole contract with [zinc-sig/core](https://github.com/zinc-sig/core).
   shared token (`--listen :8080 --token-file <path>`, used on Kubernetes).
   Core sends `POST /v1/lint` with the language, filename and code and gets
   the unified findings report back. The server lints with warm tools: a
-  resident checkstyle JVM for Java, a Go build cache warmed at startup,
+  resident javac JVM for Java, a Go build cache warmed at startup,
   and ruff or clang-tidy as one-shot processes in a fresh workspace per
   request. It bounds concurrency with `--workers` and a short queue,
   answers `busy` beyond that, enforces a per-request deadline (`8s`), keeps
@@ -48,7 +48,7 @@ printf 'GET /healthz/ready HTTP/1.1\r\nHost: linter\r\nConnection: close\r\n\r\n
 | Toolchain | Version | Native invocation (run by `cobe-lint`) |
 |---|---|---|
 | Ruff (python312, python313) | 0.15.21 (one native binary shared by the python languages, installed by a pinned [uv](https://github.com/astral-sh/uv)) | `/usr/local/bin/ruff check --no-cache --output-format=json --target-version py<NN> <files>` |
-| Checkstyle | 10.21.1 (on a jlink'ed minimal Java 21 runtime) | `/opt/java/bin/java -jar /opt/checkstyle.jar -c /opt/checkstyle-config.xml -f xml <files>` |
+| javac (java) | the compiler of the `eclipse-temurin:21-jdk` build stage, in a jlink'ed minimal Java 21 runtime | `/opt/java/bin/java -jar /opt/javac-worker.jar --once --release <N> <files>` |
 | Clang-Tidy (c, cpp11, cpp14) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
 | Go | 1.24.0 | `go vet <files>` |
 
@@ -69,7 +69,7 @@ Every value below is a field of the language's stanza in
 |---|---|---|
 | python312 | Python 3.12 | `with.target: py312` (ruff `--target-version`) |
 | python313 | Python 3.13 | `with.target: py313` (ruff `--target-version`) |
-| java | Java syntax up to 21 | the pinned checkstyle grammar, on a jlink'ed OpenJDK 21 runtime |
+| java | Java SE 11 syntax and API | `with.release: "11"` (javac `--release 11`) |
 | c | `-std=gnu17` | `with.std: gnu17` (pins clang 19's probed default) |
 | cpp11 | `-std=gnu++11` | `with.std: gnu++11` (GNU dialect, matching the gnu17 precedent) |
 | cpp14 | `-std=gnu++14` | `with.std: gnu++14` (GNU dialect, matching the gnu17 precedent) |
@@ -80,17 +80,21 @@ before: no interpreter ships at all. One pinned ruff binary lints every
 Python line, so adding e.g. python314 is a new stanza whose `with:` block
 sets `target: py314` — no interpreter or virtualenv install behind it.
 
+Java versions work the same way. The image's one javac checks each Java
+stanza against the API signatures of its `with.release`, so adding e.g.
+java17 is a stanza with `release: "17"`; JDK 21's javac covers releases 8
+to 21. Core's language registry decides which id a question uses.
+
 ## Key paths
 
 - `/usr/local/bin/cobe-lint` — the unified CLI (the only path core hardcodes)
 - `/usr/local/bin/ruff` — the shared ruff binary behind the python languages
-- `/opt/checkstyle.jar`, `/opt/checkstyle-config.xml` — Checkstyle JAR and
-  configuration (based on Google's Java Style Guide)
-- `/opt/java` — jlink'ed minimal Java runtime that runs checkstyle
-- `/opt/checkstyle-worker.jar`, `/opt/checkstyle-warmup/Warmup.java` — the
-  resident checkstyle worker `cobe-lint serve` keeps running for Java
-  lints, and its warm-up sample (source and Go supervisor in
-  `internal/checkstyleworker`; protocol in docs/CONTRACT.md Appendix A)
+- `/opt/java` — jlink'ed minimal Java runtime holding javac and the API
+  signatures of every `--release` version
+- `/opt/javac-worker.jar`, `/opt/javac-warmup/Warmup.java` — the javac
+  worker, which `cobe-lint serve` keeps running for Java lints and the
+  one-shot CLI runs once, and its warm-up sample (source and Go supervisor
+  in `internal/javacworker`; protocol in docs/CONTRACT.md Appendix A)
 - `/usr/bin/tini` — the entrypoint; it runs as PID 1 and reaps the
   orphaned children of killed tools
 - `/tmp/cobe-lint.sock` — the server's unix socket (`--socket`)
@@ -102,7 +106,7 @@ sets `target: py314` — no interpreter or virtualenv install behind it.
   startup
 
 Source: the server in `internal/serve`, `dial-stdio` in
-`internal/dialstdio`, the checkstyle worker in `internal/checkstyleworker`.
+`internal/dialstdio`, the javac worker in `internal/javacworker`.
 The image runs as the non-root `linter` user, and its label
 `org.zinc-sig.linter.serve-protocol` names the serve protocol it
 implements.

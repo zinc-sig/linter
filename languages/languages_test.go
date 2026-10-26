@@ -37,7 +37,7 @@ func TestNativeCommands(t *testing.T) {
 		"cpp11":     {"clang-tidy", "input-file", "--", "-std=gnu++11"},
 		"cpp14":     {"clang-tidy", "input-file", "--", "-std=gnu++14"},
 		"go":        {"go", "vet", "input-file"},
-		"java":      {"/opt/java/bin/java", "-jar", "/opt/checkstyle.jar", "-c", "/opt/checkstyle-config.xml", "-f", "xml", "input-file"},
+		"java":      {"/opt/java/bin/java", "-XX:+UseSerialGC", "-XX:-UsePerfData", "-jar", "/opt/javac-worker.jar", "--once", "--release", "11", "input-file"},
 		"python312": {"/usr/local/bin/ruff", "check", "--no-cache", "--output-format=json", "--target-version", "py312", "input-file"},
 		"python313": {"/usr/local/bin/ruff", "check", "--no-cache", "--output-format=json", "--target-version", "py313", "input-file"},
 	}
@@ -68,7 +68,7 @@ func TestNames(t *testing.T) {
 func TestTool(t *testing.T) {
 	want := map[string]string{
 		"c": ToolClangTidy, "cpp11": ToolClangTidy, "cpp14": ToolClangTidy,
-		"go": ToolGoVet, "java": ToolCheckstyle,
+		"go": ToolGoVet, "java": ToolJavac,
 		"python312": ToolRuff, "python313": ToolRuff,
 	}
 	for _, l := range All() {
@@ -87,11 +87,12 @@ func TestManifestVersion(t *testing.T) {
 	}
 }
 
-// The Dockerfile installs these three toolchains from the manifest's pins
-// (clang-tidy comes from Debian and has none).
+// The Dockerfile installs these two toolchains from the manifest's pins
+// (clang-tidy comes from Debian and javac from the JDK stage, so neither
+// has one).
 func TestToolVersions(t *testing.T) {
 	pins := ToolVersions()
-	for _, tool := range []string{"ruff", "checkstyle", "go"} {
+	for _, tool := range []string{"ruff", "go"} {
 		if pins[tool] == "" {
 			t.Errorf("ToolVersions missing %q: %v", tool, pins)
 		}
@@ -129,9 +130,17 @@ func TestParseRejects(t *testing.T) {
 			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: clang-tidy\n    with: {std: gnu17, target: py313}\n",
 			"field target not found",
 		},
-		"option on checkstyle": {
-			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: checkstyle\n    with: {std: gnu17}\n",
-			"takes no with: options",
+		"javac without release": {
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: javac\n",
+			"requires with.release",
+		},
+		"javac release not a version": {
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: javac\n    with: {release: \"1.8\"}\n",
+			"is not a Java SE version",
+		},
+		"std on javac": {
+			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: javac\n    with: {release: \"11\", std: gnu17}\n",
+			"field std not found",
 		},
 		"option on go vet": {
 			"version: 1\nlanguages:\n  x:\n    name: X\n    tool: go vet\n    with: {target: py313}\n",
@@ -213,7 +222,9 @@ languages:
       std: gnu2x
   mjava:
     name: M Java
-    tool: checkstyle
+    tool: javac
+    with:
+      release: 17
   mgo:
     name: M Go
     tool: go vet

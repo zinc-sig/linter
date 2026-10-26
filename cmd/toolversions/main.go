@@ -19,7 +19,6 @@ import (
 // Dockerfile consumes, in output order.
 var vars = []struct{ tool, shellVar string }{
 	{"ruff", "RUFF_VERSION"},
-	{"checkstyle", "CHECKSTYLE_VERSION"},
 	{"go", "GO_VERSION"},
 }
 

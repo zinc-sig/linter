@@ -1,6 +1,6 @@
 //go:build !linux
 
-package checkstyleworker
+package javacworker
 
 import (
 	"os"

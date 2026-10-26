@@ -84,7 +84,7 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 - `tool` (string, required): freeform tool name + version, for display and
   debugging. Consumers must not key behavior on it — use `tool_id`.
 - `tool_id` (string, optional, additive in v1): stable tool identifier
-  (e.g. `ruff`, `checkstyle`, `clang-tidy`, `go vet`) that consumers may
+  (e.g. `ruff`, `javac`, `clang-tidy`, `go vet`) that consumers may
   key icons/filters/suppressions on. When absent, core falls back to a
   prefix match of `tool` against known ids.
 - `findings` (array, required, may be empty):
@@ -99,10 +99,11 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
     `refactor`, `info`. Tool-native categories are mapped by the language
     implementation (e.g. ruff: syntax errors and undefined names
     (`F821`-`F823`)→`error`, other pyflakes `F` and pycodestyle
-    `W`→`warning`, pycodestyle `E`→`convention`; checkstyle
-    `error`→`error`, `warning`→`warning`, `info`→`info`).
+    `W`→`warning`, pycodestyle `E`→`convention`; javac errors→`error`,
+    warnings→`warning`, notes dropped).
   - `rule` (string, optional): tool-native rule/check id (e.g. `F401`,
-    `AvoidStarImport`, `clang-analyzer-core.NullDereference`).
+    `compiler.err.cant.resolve.location`,
+    `clang-analyzer-core.NullDereference`).
   - `message` (string, required): human-readable description.
 
 ## 3. Exit-code semantics
@@ -115,9 +116,10 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
   partial; the CLI writes a diagnostic to stderr. Core reports this as a
   lint-execution error, not as findings. Under serve the same outcome is
   the `linter_execution_failed` error (section 8.2).
-- Where the boundary sits follows the native tool: a Java source Checkstyle
-  cannot parse at all makes it crash without a report (non-zero), while a
-  Python syntax error is an ordinary ruff `invalid-syntax` finding (exit `0`).
+- Where the boundary sits follows the native tool. A syntax error is an
+  ordinary finding for every language (ruff `invalid-syntax`, javac
+  `compiler.err.*`, exit `0`), while a file the tool cannot read is a
+  failure.
 
 ## 4. Invocation environment
 
@@ -171,7 +173,7 @@ reach the tools changes, from one exec per step to HTTP requests.
 | `--socket PATH` | `/tmp/cobe-lint.sock` | Unix socket the server always listens on. |
 | `--listen ADDR` | empty (off) | Optional TCP listener, a Go `net.Listen` address such as `:8080`. Requires `--token-file`. |
 | `--token-file PATH` | empty | File holding the TCP shared token (section 7.2). Only valid with `--listen`. |
-| `--workers N` | `4` | Maximum number of lints executing at once, across all languages (1 to 64). Also sizes the resident checkstyle thread pool. Core passes its `max_concurrent`. |
+| `--workers N` | `4` | Maximum number of lints executing at once, across all languages (1 to 64). Also sizes the resident javac thread pool. Core passes its `max_concurrent`. |
 | `--queue N` | value of `--workers` | Lints that may wait for a worker (0 to 256). Beyond workers plus queue the server answers `busy` at once. |
 | `--deadline DUR` | `8s` | Per-request deadline of a lint, a Go duration greater than zero. Kept below core's 10 s lint budget so the server answers before core gives up. |
 | `--cache-dir PATH` | `/workspace/lint-cache` | Root of the asset cache (section 9.2). |
@@ -227,14 +229,14 @@ value out of range) is a usage error.
 2. Serve at once. Until ready, `GET /v1/manifest`, the asset endpoint and
    both health endpoints work, `POST /v1/lint` answers
    `503 linter_not_ready`, and `GET /healthz/ready` answers 503 `starting`.
-3. Warm up concurrently: start and warm the resident checkstyle worker
-   when any manifest language uses checkstyle (section 9.6), and run the
+3. Warm up concurrently: start and warm the resident javac worker
+   when any manifest language uses javac (section 9.6), and run the
    Go build-cache warm-up when any language uses `go vet` (section 9.5).
-4. Become ready once the worker pool runs, the checkstyle worker (if
+4. Become ready once the worker pool runs, the javac worker (if
    needed) answered its warm-up, and the Go warm-up (if needed) finished,
    successfully or not.
 5. On SIGTERM or SIGINT: close the listeners, cancel in-flight lints,
-   stop the checkstyle worker, remove the socket file, and exit within
+   stop the javac worker, remove the socket file, and exit within
    2 seconds.
 
 | Exit code | Meaning |
@@ -323,12 +325,12 @@ contents or the token.
 | `filename_invalid` | 422 | `filename` fails the rules of section 8.4. | `filename_invalid`; 400 |
 | `unsupported_language` | 422 | `language` is not a manifest key. | `unsupported_language`; 400 |
 | `assets_invalid` | 422 | The upload is not an acceptable tar (section 9.2). | upload failure; the lint proceeds without assets |
-| `linter_execution_failed` | 500 | The tool failed operationally (the non-zero case of section 3, unparseable output, a checkstyle error reply). `details` carries the diagnostic the CLI would write to stderr. | `linter_execution_failed`; 503 |
+| `linter_execution_failed` | 500 | The tool failed operationally (the non-zero case of section 3, unparseable output, a javac worker error reply). `details` carries the diagnostic the CLI would write to stderr. | `linter_execution_failed`; 503 |
 | `workspace_setup_failed` | 500 | The per-request workspace could not be created or populated (for example ENOSPC). | `workspace_setup_failed`; 503 |
 | `internal` | 500 | Any other server fault. | passed through; 503 |
 | `busy` | 503 | Workers and queue are full, or too many asset uploads are in progress. Carries `Retry-After: 1`. | `busy`; 503 |
-| `linter_not_ready` | 503 | Not ready yet (section 7.3), the checkstyle worker restarted under the request, or the checkstyle worker failed for good. Carries `Retry-After: 1`. | `linter_not_ready`; 503 "Lint service unavailable" |
-| `timeout` | 504 | The deadline passed while the request was queued, waiting for the checkstyle worker, or running. | `timeout`; 503 |
+| `linter_not_ready` | 503 | Not ready yet (section 7.3), the javac worker restarted under the request, or the javac worker failed for good. Carries `Retry-After: 1`. | `linter_not_ready`; 503 "Lint service unavailable" |
+| `timeout` | 504 | The deadline passed while the request was queued, waiting for the javac worker, or running. | `timeout`; 503 |
 | `cache_full` | 507 | The asset cache cannot make room for an upload. | upload failure; the lint proceeds without assets |
 
 The codes core produces without asking the server stay core-side:
@@ -457,28 +459,28 @@ it on a dead connection.
 ### 8.6 `GET /healthz/live`
 
 A liveness heartbeat answered by the server's own goroutine; it never
-waits for a worker, the queue, or the checkstyle worker.
+waits for a worker, the queue, or the javac worker.
 
 - `200 {"status": "ok"}` while the server is responsive.
 - `503 {"status": "stuck", "reason": "..."}` when a worker slot has been
-  held by one request, or a request has been on the checkstyle worker,
+  held by one request, or a request has been on the javac worker,
   for more than three times `--deadline` (24 seconds by default). The
   second case covers Java requests already answered with `504 timeout`,
-  which leave their worker slot but keep their checkstyle thread. One-shot
-  tools are killed at the deadline and the checkstyle worker is restarted
+  which leave their worker slot but keep their javac thread. One-shot
+  tools are killed at the deadline and the javac worker is restarted
   once a request has run on it for `--deadline` (sections 9.4 and 9.6), so
   only a process the kernel cannot kill reaches this state.
 
 ### 8.7 `GET /healthz/ready`
 
-- `503 {"status": "starting", "pending": ["checkstyle", "go-warmup"]}`
+- `503 {"status": "starting", "pending": ["javac", "go-warmup"]}`
   before startup step 4 (section 7.3); `pending` lists the components
-  still warming up, from `workers`, `checkstyle` and `go-warmup`.
+  still warming up, from `workers`, `javac` and `go-warmup`.
 - `200 {"status": "ready"}` from startup step 4 on. Ready stays `200`
-  through routine recovery, such as a checkstyle worker restart, during
+  through routine recovery, such as a javac worker restart, during
   which Java lints wait or time out (section 9.6).
 - `503 {"status": "failed", "reason": "..."}` on a terminal failure: the
-  checkstyle worker failed to start three times in a row. The server does
+  javac worker failed to start three times in a row. The server does
   not recover from it; replacing the container is the remedy.
 
 Ready is therefore monotone: `starting` only before the first `200`, and
@@ -514,7 +516,7 @@ path. An asset file where `filename` needs a directory is a
 directory and `filename` as its file argument (section 4). The directory
 is removed after the tool exits; for a Java request, when the request is
 answered or abandoned. A Java request that passed its deadline may still
-be running on the checkstyle worker and then finds its file gone; its
+be running on the javac worker and then finds its file gone; its
 reply is discarded either way.
 
 **Cache layout.** Entries live under `--cache-dir`, one per cache key, and
@@ -564,7 +566,7 @@ miss.
 
 ### 9.3 Tool environment
 
-Every tool subprocess the server starts, including the checkstyle worker,
+Every tool subprocess the server starts, including the javac worker,
 gets an environment built from scratch, never the server's own:
 
 ```
@@ -602,11 +604,11 @@ injected either.
   is freed once the tool has exited.
 - A Java request in flight is abandoned when its client disconnects: its
   result is discarded on arrival, and its worker slot stays held until the
-  checkstyle worker replies or the request's deadline passes, so abandoned
+  javac worker replies or the request's deadline passes, so abandoned
   requests still count against `--workers`.
 - A Java request whose deadline passes while it runs answers
-  `504 timeout` at once, but keeps its checkstyle thread until the
-  checkstyle worker replies, so the thread pool is never oversubscribed.
+  `504 timeout` at once, but keeps its javac thread until the
+  javac worker replies, so the thread pool is never oversubscribed.
   When the request has run for `--deadline` since it was sent to the
   worker, the worker is considered poisoned, because Java cannot stop a
   thread, and is restarted (section 9.6). Time spent queued or waiting
@@ -628,16 +630,26 @@ takes about 13 seconds, and the first Go lint importing `fmt` after it
 runs in about 130 ms instead of about 950 ms with an empty `main`. A
 failed warm-up is logged and does not block readiness.
 
-### 9.6 Resident checkstyle worker
+### 9.6 Resident javac worker
 
 Java lints do not start a JVM each. When any manifest language uses
-checkstyle, the server starts one resident JVM as a child process
-(Appendix A). It loads the checkstyle configuration once and runs each
-request on a fresh `Checker` in a fixed thread pool of `--workers`
-threads.
+javac, the server starts one resident JVM as a child process (Appendix
+A) with a fixed thread pool of `--workers` threads. Each request compiles
+the student file through flow analysis, without writing classes, as
+`javac --release <N>` would for the stanza's `with.release`.
 
-- **Warm-up.** Before the server is ready, the worker lints a bundled
-  sample; its reply is the worker's readiness signal.
+- **Sources.** Every other regular `.java` file in the workspace (section
+  9.2), outside the top-level `.zinc/` and `examination-assets/`
+  directories, is parsed and entered with the student file, so a class
+  the question's assets provide resolves as it does when the submission
+  is graded. Only the student file's classes are attributed, so the
+  method bodies of the other files cost nothing, and findings are
+  reported for the student file only. Nothing is
+  looked up on a source or class path. More than 500 such files fail the
+  request.
+- **Warm-up.** Before the server is ready, the worker checks a bundled
+  sample once on every pool thread, then answers the server's warm-up
+  request; that reply is the worker's readiness signal.
 - **Restart.** The server restarts the worker when it exits, when it
   writes a line that is not a valid reply, or when a request is still
   unanswered `--deadline` after it was sent to the worker (poisoned). The
@@ -652,11 +664,13 @@ threads.
   waits 1 second, then 2 seconds. The third consecutive failed start
   marks the worker failed: Java lints answer `503 linter_not_ready` and
   `/healthz/ready` answers `failed`.
-- **Budget.** The JVM runs with `-XX:+UseSerialGC -Xmx128m`. Measured on
-  two CPUs: about 105 MB resident and 13 JVM threads idle after the
-  warm-up, plus one thread per pool thread used, and about 150 MB resident
-  once the heap has grown under load. Every JVM thread counts against the
-  container's 256-pid limit.
+- **Budget.** The JVM runs with `-XX:+UseSerialGC` and a heap of 64 MB
+  plus 16 MB per pool thread (`-Xmx128m` at the default four). Each pool
+  thread keeps its own compiler, about 8 MB of live heap. Measured on two
+  CPUs with four threads: about 145 MB resident and 17 JVM threads idle
+  after the warm-up, and about 220 MB resident under load. The warm-up
+  takes about 2 seconds with four threads and 11 seconds with 64. Every
+  JVM thread counts against the container's pid limit.
 
 ## 10. `cobe-lint dial-stdio`
 
@@ -792,42 +806,55 @@ signs of an older image:
 - `GET /v1/manifest` answers without a `serve` object or with a protocol
   core does not implement.
 
-## Appendix A. Checkstyle worker protocol (image-internal)
+## Appendix A. javac worker protocol (image-internal)
 
 This protocol is private to the image: core never sees it, and it may
 change between image releases without a contract version bump. It is
 specified here so that the server and the worker can be built separately.
 
 **Files.** The worker is a small Java program compiled at image build, in
-the `eclipse-temurin:21-jdk` stage, into `/opt/checkstyle-worker.jar`. The
-jlink module set must cover it as well as `/opt/checkstyle.jar`. The
-warm-up sample is `/opt/checkstyle-warmup/Warmup.java`.
+the `eclipse-temurin:21-jdk` stage, into `/opt/javac-worker.jar`. It uses
+javac's task pool and platform provider from the `jdk.compiler` packages
+`com.sun.tools.javac.api` and `com.sun.tools.javac.platform`, which the
+jar's manifest exports to it. The jlink module set is `java.compiler`,
+`jdk.compiler` (which carries `lib/ct.sym`, the API signatures of every
+`--release` version) and `jdk.zipfs` (which reads `ct.sym`). The warm-up
+sample is `/opt/javac-warmup/Warmup.java`.
 
 **Launch.**
 
 ```
-/opt/java/bin/java -XX:+UseSerialGC -Xmx128m -XX:-UsePerfData \
-  -cp /opt/checkstyle.jar:/opt/checkstyle-worker.jar CheckstyleWorker \
-  --config /opt/checkstyle-config.xml --threads <workers>
+/opt/java/bin/java -XX:+UseSerialGC -Xmx<64 + 16 * workers>m -XX:-UsePerfData \
+  -jar /opt/javac-worker.jar --threads <workers> --warmup /opt/javac-warmup/Warmup.java
 ```
 
 with the environment of section 9.3. `-XX:-UsePerfData` keeps the JVM
-from writing `hsperfdata` files.
+from writing `hsperfdata` files. `--warmup` checks the sample once on each
+pool thread before the first request line is read.
+
+**One-shot.** `java -jar /opt/javac-worker.jar --once --release <N>
+<file>...` checks the files against the working directory and prints the
+report object below to stdout, exiting `0`; on an operational failure it
+writes the cause to stderr and exits `1`. The java language's manifest
+`command` runs it (through `cobe-lint lint java`).
 
 **Lines.** The server writes requests to the worker's stdin and reads
 replies from its stdout, one UTF-8 JSON object per `\n`-terminated line,
 with nothing else on stdout. Stderr is free-form and the server copies it
 to its log.
 
-- Request: `{"id": 17, "files": ["/tmp/cobe-lint-ws-ab12/src/app/Solution.java"]}`.
-  `id` is a positive integer unique within one worker process; `files`
-  holds absolute paths.
-- Success reply: `{"id": 17, "xml": "<?xml version=\"1.0\" ...</checkstyle>"}`.
-  `xml` is exactly what `java -jar checkstyle.jar -c <config> -f xml
-  <files>` prints for those files: an `XMLLogger` report from a fresh
-  `Checker` configured with the configuration loaded at launch.
-- Error reply: `{"id": 17, "error": "<exception message>"}` when checkstyle
-  throws, for example on a source it cannot parse at all.
+- Request: `{"id": 17, "release": "11", "dir": "/tmp/cobe-lint-ws-ab12",
+  "files": ["/tmp/cobe-lint-ws-ab12/src/app/Solution.java"]}`. `id` is a
+  positive integer unique within one worker process; `release` is a
+  `--release` value; `dir` is the workspace and `files` holds absolute
+  paths inside it.
+- Success reply: `{"id": 17, "report": {"tool": "javac 21.0.12.1 --release
+  11", "findings": [...]}}`. Each finding has the shape of section 2, with
+  `path` as the request named the file. The one-shot report is the same
+  object.
+- Error reply: `{"id": 17, "error": "<message>"}` when the check cannot
+  run: an unsupported release, an unreadable file, too many sources, or an
+  error javac reports without a source.
 - Exactly one reply per request, in any order. On stdin EOF the worker
   finishes the requests in flight and exits `0`.
 - Strings in replies escape every character outside printable ASCII as
@@ -837,16 +864,25 @@ to its log.
 - A reply whose `id` the server did not send (for example one for a
   request the server already gave up on, from an earlier worker) is
   logged and ignored. A line that is not JSON, lacks a positive `id`,
-  carries both or neither of `xml` and `error`, or is longer than 32 MiB
-  is not a valid reply.
+  carries both or neither of `report` and `error`, or is longer than
+  32 MiB is not a valid reply.
 
-**Audit.** The worker loads the configuration as checkstyle's `Main`
-does (system properties expand `${...}`, modules with severity `ignore`
-are omitted) and runs each request the same way: a root module created
-through `PackageObjectFactory`, configured, given a fresh `XMLLogger`
-over an in-memory buffer, then `process(files)` and `destroy()`.
-`System.out` is pointed at stderr at startup, so nothing checkstyle
-prints can reach the reply stream.
+**Check.** Each pool thread keeps a javac task pool, which reuses the
+symbol tables of earlier tasks and forgets every class a task's
+compilation units declared, and per release a file manager over that
+release's `ct.sym` signatures, built on first use. A request parses and
+enters the named files first and the other sources after them, then
+attributes and flow-analyses the classes the named files declare, with
+`-source <N> -target <N> -proc:none -implicit:none -encoding UTF-8`,
+empty class and source paths, and up to 1000 errors and 1000 warnings.
+Because the named files come first, a class a sibling declares again is
+reported as a duplicate in the sibling. Error diagnostics map to `error`, warnings to
+`warning`, and notes are dropped. Messages use the English locale and
+keep javac's `symbol:` and `location:` lines. `rule` is the diagnostic
+code. Columns count code points from the line start, a tab as one. A
+range that continues past its first line ends at that line's end.
+`System.out` is pointed at stderr at startup, so nothing javac prints can
+reach the reply stream.
 
 **Exit codes.** `0` after stdin EOF; `2` for bad arguments; `3` for a
 request line it cannot parse; `4` on `OutOfMemoryError`, without a
@@ -858,10 +894,10 @@ exit is a restart for the server, and the requests in flight answer
 `/` as working directory and a parent-death signal of `SIGKILL`, and
 kills the whole group when it restarts or poisons the worker.
 
-**Mapping.** The server feeds a success reply to the existing checkstyle
-driver as `Parse(stdout = xml, stderr = nil, exitCode = 0)` and an error
-reply as `Parse(stdout = nil, stderr = error, exitCode = 1)`. The latter
-finds no XML and returns an operational failure, which the server answers
-as `linter_execution_failed`, the outcome the one-shot CLI has for a
-crashing checkstyle. `linter.NormalizePath` then maps the absolute names
-back to `filename`.
+**Mapping.** The server feeds a success reply to the javac driver as
+`Parse(stdout = report, stderr = nil, exitCode = 0)` and an error reply
+as `Parse(stdout = nil, stderr = error, exitCode = 1)`. The latter is an
+operational failure, which the server answers as
+`linter_execution_failed`, the outcome the one-shot CLI has for the same
+failure. `linter.NormalizePath` then maps the absolute paths back to
+`filename`.

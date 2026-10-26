@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinc-sig/linter/internal/checkstyleworker"
+	"github.com/zinc-sig/linter/internal/javacworker"
 	"github.com/zinc-sig/linter/languages"
 	"github.com/zinc-sig/linter/linter"
 )
@@ -173,19 +173,21 @@ func TestUnknownPathAndMethod(t *testing.T) {
 	}
 }
 
-func TestNotReadyUntilCheckstyleWarm(t *testing.T) {
+func TestNotReadyUntilJavacWarm(t *testing.T) {
 	c := newFakeChecker()
-	c.check = func(_ context.Context, files []string) (checkstyleworker.Output, error) {
-		return checkstyleworker.Output{Stdout: []byte(files[0] + "|ok\n")}, nil
+	var seen javacworker.Request
+	c.check = func(_ context.Context, req javacworker.Request) (javacworker.Output, error) {
+		seen = req
+		return javacworker.Output{Stdout: []byte(req.Files[0] + "|ok\n")}, nil
 	}
 	ts := startServer(t, serverOpts{
 		linters: []linter.Linter{fakeLinter{lang: "java"}, fakeLinter{lang: "fake", script: "true"}},
-		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		toolOf:  map[string]string{"java": languages.ToolJavac},
 		checker: c,
 		noReady: true,
 	})
 	r := do(t, ts.client, http.MethodGet, "http://linter/healthz/ready", nil, nil)
-	if r.status != 503 || !bytes.Contains(r.body, []byte(`"status":"starting"`)) || !bytes.Contains(r.body, []byte(`"pending":["checkstyle"]`)) {
+	if r.status != 503 || !bytes.Contains(r.body, []byte(`"status":"starting"`)) || !bytes.Contains(r.body, []byte(`"pending":["javac"]`)) {
 		t.Errorf("ready before warm-up: %d %s", r.status, r.body)
 	}
 	r = ts.lint(t, map[string]any{"language": "fake", "filename": "a.py", "code": ""})
@@ -206,29 +208,35 @@ func TestNotReadyUntilCheckstyleWarm(t *testing.T) {
 	if len(rep.Findings) != 1 || rep.Findings[0].Path != "src/app/Solution.java" {
 		t.Errorf("java findings = %+v", rep.Findings)
 	}
+	// The worker gets the stanza's release and the whole workspace, with
+	// the student file inside it.
+	if seen.Release != "11" || seen.Files[0] != filepath.Join(seen.Dir, "src/app/Solution.java") ||
+		!strings.HasPrefix(filepath.Base(seen.Dir), workspacePrefix) {
+		t.Errorf("worker request = %+v", seen)
+	}
 }
 
-func TestCheckstyleErrors(t *testing.T) {
+func TestJavacErrors(t *testing.T) {
 	c := newFakeChecker()
 	close(c.ready)
 	var next error
-	var out checkstyleworker.Output
-	c.check = func(context.Context, []string) (checkstyleworker.Output, error) { return out, next }
+	var out javacworker.Output
+	c.check = func(context.Context, javacworker.Request) (javacworker.Output, error) { return out, next }
 	ts := startServer(t, serverOpts{
 		linters: []linter.Linter{fakeLinter{lang: "java"}},
-		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		toolOf:  map[string]string{"java": languages.ToolJavac},
 		checker: c,
 	})
 	cases := []struct {
 		err    error
-		out    checkstyleworker.Output
+		out    javacworker.Output
 		status int
 		code   string
 	}{
-		{checkstyleworker.ErrTimeout, checkstyleworker.Output{}, 504, "timeout"},
-		{checkstyleworker.ErrRestarted, checkstyleworker.Output{}, 503, "linter_not_ready"},
-		{checkstyleworker.ErrFailed, checkstyleworker.Output{}, 503, "linter_not_ready"},
-		{nil, checkstyleworker.Output{Stderr: []byte("parse error"), ExitCode: 42}, 500, "linter_execution_failed"},
+		{javacworker.ErrTimeout, javacworker.Output{}, 504, "timeout"},
+		{javacworker.ErrRestarted, javacworker.Output{}, 503, "linter_not_ready"},
+		{javacworker.ErrFailed, javacworker.Output{}, 503, "linter_not_ready"},
+		{nil, javacworker.Output{Stderr: []byte("parse error"), ExitCode: 42}, 500, "linter_execution_failed"},
 	}
 	for _, tc := range cases {
 		next, out = tc.err, tc.out
@@ -396,14 +404,14 @@ func TestAbandonedJavaHoldsSlotUntilReply(t *testing.T) {
 	close(c.ready)
 	reply := make(chan struct{})
 	ctxErr := make(chan error, 1)
-	c.check = func(ctx context.Context, files []string) (checkstyleworker.Output, error) {
+	c.check = func(ctx context.Context, req javacworker.Request) (javacworker.Output, error) {
 		<-reply // ignores cancellation, as the real worker does once sent
 		ctxErr <- ctx.Err()
-		return checkstyleworker.Output{Stdout: []byte(files[0] + "|ok\n")}, nil
+		return javacworker.Output{Stdout: []byte(req.Files[0] + "|ok\n")}, nil
 	}
 	ts := startServer(t, serverOpts{
 		linters: []linter.Linter{fakeLinter{lang: "java"}},
-		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		toolOf:  map[string]string{"java": languages.ToolJavac},
 		checker: c,
 		tune:    func(c *Config) { c.Workers, c.Queue = 1, 0 },
 	})
@@ -449,13 +457,13 @@ func TestLivenessReportsStuckSlot(t *testing.T) {
 	c := newFakeChecker()
 	close(c.ready)
 	unblock := make(chan struct{})
-	c.check = func(context.Context, []string) (checkstyleworker.Output, error) {
+	c.check = func(context.Context, javacworker.Request) (javacworker.Output, error) {
 		<-unblock
-		return checkstyleworker.Output{}, checkstyleworker.ErrTimeout
+		return javacworker.Output{}, javacworker.ErrTimeout
 	}
 	ts := startServer(t, serverOpts{
 		linters: []linter.Linter{fakeLinter{lang: "java"}},
-		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		toolOf:  map[string]string{"java": languages.ToolJavac},
 		checker: c,
 		tune:    func(c *Config) { c.Deadline = 100 * time.Millisecond },
 	})
@@ -468,12 +476,12 @@ func TestLivenessReportsStuckSlot(t *testing.T) {
 	}
 }
 
-func TestLivenessReportsStuckCheckstyleRequest(t *testing.T) {
+func TestLivenessReportsStuckJavacRequest(t *testing.T) {
 	c := newFakeChecker()
 	close(c.ready)
 	ts := startServer(t, serverOpts{
 		linters: []linter.Linter{fakeLinter{lang: "java"}},
-		toolOf:  map[string]string{"java": languages.ToolCheckstyle},
+		toolOf:  map[string]string{"java": languages.ToolJavac},
 		checker: c,
 		tune:    func(c *Config) { c.Deadline = 100 * time.Millisecond },
 	})
@@ -482,10 +490,10 @@ func TestLivenessReportsStuckCheckstyleRequest(t *testing.T) {
 		t.Errorf("live within three deadlines: %d %s", r.status, r.body)
 	}
 	// No worker slot is held: the request was answered at its deadline
-	// and only the checkstyle worker still runs it.
+	// and only the javac worker still runs it.
 	c.inFlight.Store(int64(400 * time.Millisecond))
 	r := do(t, ts.client, http.MethodGet, "http://linter/healthz/live", nil, nil)
-	if r.status != 503 || !bytes.Contains(r.body, []byte(`"status":"stuck"`)) || !bytes.Contains(r.body, []byte("checkstyle request")) {
+	if r.status != 503 || !bytes.Contains(r.body, []byte(`"status":"stuck"`)) || !bytes.Contains(r.body, []byte("javac request")) {
 		t.Errorf("live: %d %s", r.status, r.body)
 	}
 }

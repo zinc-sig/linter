@@ -21,16 +21,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zinc-sig/linter/internal/checkstyleworker"
+	"github.com/zinc-sig/linter/internal/javacworker"
 	"github.com/zinc-sig/linter/internal/manifest"
 	"github.com/zinc-sig/linter/languages"
 	"github.com/zinc-sig/linter/linter"
 )
 
-// Checker is the resident checkstyle worker as the server uses it;
-// *checkstyleworker.Worker implements it.
+// Checker is the resident javac worker as the server uses it;
+// *javacworker.Worker implements it.
 type Checker interface {
-	Check(ctx context.Context, files []string) (checkstyleworker.Output, error)
+	Check(ctx context.Context, req javacworker.Request) (javacworker.Output, error)
 	Ready() <-chan struct{}
 	Failed() <-chan struct{}
 	Err() error
@@ -49,9 +49,9 @@ type Deps struct {
 	ManifestVersion int
 	// ToolOf returns a language's driver id (languages.Tool*).
 	ToolOf func(language string) string
-	// StartChecker starts the resident checkstyle worker with a pool of
+	// StartChecker starts the resident javac worker with a pool of
 	// threads and a per-request run budget; called only when a language
-	// uses checkstyle.
+	// uses javac.
 	StartChecker func(threads int, runBudget time.Duration, log func(string)) (Checker, error)
 	// GoWarmup fills the Go build cache once; called only when a language
 	// uses go vet.
@@ -60,7 +60,7 @@ type Deps struct {
 	Log io.Writer
 }
 
-// DefaultDeps are the image's languages, checkstyle worker and Go
+// DefaultDeps are the image's languages, javac worker and Go
 // warm-up, logging to stderr.
 func DefaultDeps(stderr io.Writer) Deps {
 	return Deps{
@@ -68,7 +68,7 @@ func DefaultDeps(stderr io.Writer) Deps {
 		ManifestVersion: languages.ManifestVersion(),
 		ToolOf:          languages.Tool,
 		StartChecker: func(threads int, runBudget time.Duration, log func(string)) (Checker, error) {
-			return checkstyleworker.Start(checkstyleworker.Config{Threads: threads, RunBudget: runBudget, Log: log})
+			return javacworker.Start(javacworker.Config{Threads: threads, RunBudget: runBudget, Log: log})
 		},
 		GoWarmup: goWarmup,
 		Log:      stderr,
@@ -122,8 +122,8 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	for _, l := range deps.Linters {
 		s.linters[l.Language()] = l
 	}
-	if s.uses(languages.ToolCheckstyle) {
-		components = append(components, componentCheckstyle)
+	if s.uses(languages.ToolJavac) {
+		components = append(components, componentJavac)
 	}
 	if s.uses(languages.ToolGoVet) {
 		components = append(components, componentGoWarmup)
@@ -259,7 +259,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.state.done(componentWorkers)
 	var warm sync.WaitGroup
-	if s.uses(languages.ToolCheckstyle) {
+	if s.uses(languages.ToolJavac) {
 		if err := s.startChecker(); err != nil {
 			s.shutdown(servers)
 			return err
@@ -285,10 +285,10 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) startChecker() error {
 	c, err := s.deps.StartChecker(s.cfg.Workers, s.cfg.Deadline, func(msg string) {
-		s.log.Info("checkstyle worker", "event", string(s.redact([]byte(msg))))
+		s.log.Info("javac worker", "event", string(s.redact([]byte(msg))))
 	})
 	if err != nil {
-		return fmt.Errorf("start checkstyle worker: %w", err)
+		return fmt.Errorf("start javac worker: %w", err)
 	}
 	s.checkerMu.Lock()
 	s.checker = c
@@ -296,14 +296,14 @@ func (s *Server) startChecker() error {
 	go func() {
 		select {
 		case <-c.Ready():
-			s.state.done(componentCheckstyle)
+			s.state.done(componentJavac)
 		case <-c.Failed():
 		case <-s.baseCtx.Done():
 			return
 		}
 		select {
 		case <-c.Failed():
-			s.state.fail(fmt.Sprintf("checkstyle worker failed: %v", c.Err()))
+			s.state.fail(fmt.Sprintf("javac worker failed: %v", c.Err()))
 		case <-s.baseCtx.Done():
 		}
 	}()

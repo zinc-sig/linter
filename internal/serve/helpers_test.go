@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinc-sig/linter/internal/checkstyleworker"
+	"github.com/zinc-sig/linter/internal/javacworker"
 	"github.com/zinc-sig/linter/languages"
 	"github.com/zinc-sig/linter/linter"
 )
@@ -32,6 +32,7 @@ type fakeLinter struct {
 
 func (f fakeLinter) Language() string { return f.lang }
 func (f fakeLinter) Name() string     { return "Fake " + f.lang }
+func (f fakeLinter) Release() string  { return "11" }
 func (f fakeLinter) Command(files []string) []string {
 	return append([]string{"/bin/sh", "-c", f.script, "sh"}, files...)
 }
@@ -54,11 +55,11 @@ func (f fakeLinter) Parse(stdout, stderr []byte, exitCode int) (linter.Report, e
 	return r, nil
 }
 
-// fakeChecker stands in for the resident checkstyle worker.
+// fakeChecker stands in for the resident javac worker.
 type fakeChecker struct {
 	ready, failed chan struct{}
 	err           error
-	check         func(ctx context.Context, files []string) (checkstyleworker.Output, error)
+	check         func(ctx context.Context, req javacworker.Request) (javacworker.Output, error)
 	closeOnce     sync.Once
 	closed        chan struct{}
 	inFlight      atomic.Int64 // LongestInFlight in nanoseconds
@@ -68,8 +69,8 @@ func newFakeChecker() *fakeChecker {
 	return &fakeChecker{ready: make(chan struct{}), failed: make(chan struct{}), closed: make(chan struct{})}
 }
 
-func (c *fakeChecker) Check(ctx context.Context, files []string) (checkstyleworker.Output, error) {
-	return c.check(ctx, files)
+func (c *fakeChecker) Check(ctx context.Context, req javacworker.Request) (javacworker.Output, error) {
+	return c.check(ctx, req)
 }
 func (c *fakeChecker) Ready() <-chan struct{}  { return c.ready }
 func (c *fakeChecker) Failed() <-chan struct{} { return c.failed }
@@ -152,7 +153,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		ToolOf:          func(k string) string { return o.toolOf[k] },
 		StartChecker: func(int, time.Duration, func(string)) (Checker, error) {
 			if o.checker == nil {
-				t.Fatal("unexpected checkstyle worker start")
+				t.Fatal("unexpected javac worker start")
 			}
 			return o.checker, nil
 		},
@@ -313,4 +314,4 @@ func dir(name string) tar.Header {
 const fp1 = "1111111111111111111111111111111111111111111111111111111111111111"
 const fp2 = "2222222222222222222222222222222222222222222222222222222222222222"
 
-var _ = languages.ToolCheckstyle
+var _ = languages.ToolJavac

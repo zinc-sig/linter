@@ -1,4 +1,4 @@
-package checkstyleworker
+package javacworker
 
 import (
 	"bufio"
@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const helperFlag = "-checkstyleworker-helper"
+const helperFlag = "-javacworker-helper"
 
 // TestMain turns the test binary into the fake JVM when the supervisor
 // launches it with helperFlag.
@@ -95,7 +95,7 @@ func fakeWorker(args []string) int {
 			}
 			file := req.Files[0]
 			name := filepath.Base(file)
-			xml := `<?xml version="1.0" encoding="UTF-8"?>` + "\n<checkstyle version=\"fake\">\n<file name=\"" + file + "\">\n</file>\n</checkstyle>\n"
+			data := req.Release + " " + req.Dir
 			switch {
 			case strings.HasPrefix(name, "sleep="):
 				ms, _ := strconv.Atoi(strings.TrimPrefix(name, "sleep="))
@@ -114,16 +114,16 @@ func fakeWorker(args []string) int {
 				write(map[string]any{"id": req.ID, "error": "boom"})
 				return
 			case name == "unknown":
-				write(map[string]any{"id": req.ID + 1000, "xml": "stray"})
+				write(map[string]any{"id": req.ID + 1000, "report": map[string]any{"findings": []any{}}})
 			case name == "big":
-				xml = strings.Repeat("x", 4096)
+				data = strings.Repeat("x", 4096)
 			case name == "env":
-				xml = strings.Join(os.Environ(), "\n")
+				data = strings.Join(os.Environ(), "\n")
 			case name == "active":
 				time.Sleep(100 * time.Millisecond)
-				xml = strconv.FormatInt(maxAct.Load(), 10)
+				data = strconv.FormatInt(maxAct.Load(), 10)
 			}
-			write(map[string]any{"id": req.ID, "xml": xml})
+			write(map[string]any{"id": req.ID, "report": map[string]any{"file": file, "data": data, "findings": []any{}}})
 		}()
 	}
 	wg.Wait()
@@ -173,7 +173,7 @@ func start(t *testing.T, mode string, mutate func(*Config)) *fixture {
 		Threads:       4,
 		Argv:          []string{os.Args[0], helperFlag, mode, f.state},
 		Env:           []string{},
-		WarmupFiles:   []string{"/warmup/Warmup.java"},
+		Warmup:        Request{Release: "11", Dir: "/warmup", Files: []string{"/warmup/Warmup.java"}},
 		WarmupTimeout: 5 * time.Second,
 		Backoff:       []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
 		Log:           f.logs.log,
@@ -203,17 +203,32 @@ func start(t *testing.T, mode string, mutate func(*Config)) *fixture {
 func check(w *Worker, timeout time.Duration, file string) (Output, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return w.Check(ctx, []string{"/ws/" + file})
+	return w.Check(ctx, Request{Release: "11", Dir: "/ws", Files: []string{"/ws/" + file}})
 }
 
-func TestCheckReturnsXMLAsToolOutput(t *testing.T) {
+// data is the payload field of a fake worker's report.
+func data(t *testing.T, out Output) string {
+	t.Helper()
+	var r struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(out.Stdout, &r); err != nil {
+		t.Fatalf("report %q: %v", out.Stdout, err)
+	}
+	return r.Data
+}
+
+func TestCheckReturnsReportAsToolOutput(t *testing.T) {
 	f := start(t, "ok", nil)
 	out, err := check(f.w, 5*time.Second, "Solution.java")
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if out.ExitCode != 0 || out.Stderr != nil || !strings.Contains(string(out.Stdout), `<file name="/ws/Solution.java">`) {
+	if out.ExitCode != 0 || out.Stderr != nil || !strings.Contains(string(out.Stdout), `"file":"/ws/Solution.java"`) {
 		t.Fatalf("unexpected output %+v", out)
+	}
+	if got := data(t, out); got != "11 /ws" {
+		t.Fatalf("release and dir seen by the child = %q, want %q", got, "11 /ws")
 	}
 }
 
@@ -267,7 +282,7 @@ func TestInFlightRequestsAreBoundedByThreads(t *testing.T) {
 				results[i] = err.Error()
 				return
 			}
-			results[i] = string(out.Stdout)
+			results[i] = data(t, out)
 		}()
 	}
 	wg.Wait()
@@ -366,7 +381,7 @@ func TestTimedOutRequestKeepsItsSlotUntilReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("next request: %v", err)
 	}
-	if got := string(out.Stdout); got != "1" {
+	if got := data(t, out); got != "1" {
 		t.Fatalf("most requests on the JVM at once = %s, want 1", got)
 	}
 	if elapsed := time.Since(began); elapsed < 500*time.Millisecond {
@@ -416,7 +431,7 @@ func TestExpiredRequestIsNotSent(t *testing.T) {
 	f := start(t, "ok", nil)
 	for range 20 {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-		_, err := f.w.Check(ctx, []string{"/ws/Solution.java"})
+		_, err := f.w.Check(ctx, Request{Release: "11", Dir: "/ws", Files: []string{"/ws/Solution.java"}})
 		cancel()
 		if !errors.Is(err, ErrTimeout) {
 			t.Fatalf("err = %v, want ErrTimeout", err)
@@ -436,7 +451,7 @@ func TestCancelledRequestWaitsForItsReply(t *testing.T) {
 	defer cancel()
 	time.AfterFunc(50*time.Millisecond, cancel)
 	began := time.Now()
-	out, err := f.w.Check(ctx, []string{"/ws/sleep=400"})
+	out, err := f.w.Check(ctx, Request{Release: "11", Dir: "/ws", Files: []string{"/ws/sleep=400"}})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -454,7 +469,7 @@ func TestCancelledAbandonedRequestIsAnsweredAtItsDeadline(t *testing.T) {
 	defer cancel()
 	time.AfterFunc(50*time.Millisecond, cancel)
 	began := time.Now()
-	if _, err := f.w.Check(ctx, []string{"/ws/hang"}); !errors.Is(err, ErrTimeout) {
+	if _, err := f.w.Check(ctx, Request{Release: "11", Dir: "/ws", Files: []string{"/ws/hang"}}); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
 	if elapsed := time.Since(began); elapsed < 250*time.Millisecond {
@@ -556,7 +571,7 @@ func TestChildEnvironmentIsScrubbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	got := strings.Split(string(out.Stdout), "\n")
+	got := strings.Split(data(t, out), "\n")
 	want := DefaultEnv()
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("child environment = %q, want %q", got, want)
@@ -586,7 +601,7 @@ func TestCancelBeforeSendReturnsContextError(t *testing.T) {
 	f := start(t, "hang", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
-	if _, err := f.w.Check(ctx, []string{"/ws/Solution.java"}); !errors.Is(err, context.Canceled) {
+	if _, err := f.w.Check(ctx, Request{Release: "11", Dir: "/ws", Files: []string{"/ws/Solution.java"}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }

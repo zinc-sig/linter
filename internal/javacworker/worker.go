@@ -1,21 +1,20 @@
-// Package checkstyleworker runs and supervises the resident checkstyle JVM
-// that serves Java lints under `cobe-lint serve` (docs/CONTRACT.md section
-// 9.6 and Appendix A). The JVM is a local child process that speaks JSON
-// lines over its stdin and stdout; a Worker starts it, warms it up,
-// restarts it when it dies or overruns a deadline, and hands each lint the
-// checkstyle XML the one-shot CLI would print, so the checkstyle driver's
-// Parse is reused unchanged.
+// Package javacworker runs and supervises the resident javac JVM that
+// serves Java lints under `cobe-lint serve` (docs/CONTRACT.md section 9.6
+// and Appendix A). The JVM is a local child process that speaks JSON lines
+// over its stdin and stdout; a Worker starts it, warms it up, restarts it
+// when it dies or overruns a deadline, and hands each lint the report the
+// one-shot CLI would print, so the javac driver's Parse serves both.
 //
 // Callers pass Check a context that carries the request deadline. Once a
 // request has been written to the JVM, Check ignores cancellation and
 // returns only when the JVM replies, dies, or the deadline passes, because
-// the JVM cannot stop the thread that runs the audit. When the deadline
+// the JVM cannot stop the thread that runs the compiler. When the deadline
 // passes first, Check returns ErrTimeout and the request keeps its thread
 // slot until the JVM replies. A request still unanswered RunBudget after it
 // was sent poisons the JVM, which is then killed and restarted. The budget
 // is measured from the send, so time spent waiting for a slot or a restart
 // never counts against the JVM.
-package checkstyleworker
+package javacworker
 
 import (
 	"bufio"
@@ -27,6 +26,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"strconv"
 	"sync"
 	"time"
@@ -34,21 +34,27 @@ import (
 
 // Paths of the worker's parts inside the image (Dockerfile runtime stage).
 const (
-	JavaPath      = "/opt/java/bin/java"
-	CheckstyleJar = "/opt/checkstyle.jar"
-	WorkerJar     = "/opt/checkstyle-worker.jar"
-	ConfigPath    = "/opt/checkstyle-config.xml"
-	WarmupFile    = "/opt/checkstyle-warmup/Warmup.java"
+	JavaPath   = "/opt/java/bin/java"
+	WorkerJar  = "/opt/javac-worker.jar"
+	WarmupFile = "/opt/javac-warmup/Warmup.java"
 )
 
 // DefaultArgv is the JVM launch line of Appendix A for a pool of threads
-// audit threads.
+// compiler threads. Each thread keeps its own compiler, about 8 MB of live
+// heap, so the heap grows by 16 MB a thread over a 64 MB base.
 func DefaultArgv(threads int) []string {
 	return []string{
-		JavaPath, "-XX:+UseSerialGC", "-Xmx128m", "-XX:-UsePerfData",
-		"-cp", CheckstyleJar + ":" + WorkerJar, "CheckstyleWorker",
-		"--config", ConfigPath, "--threads", strconv.Itoa(threads),
+		JavaPath, "-XX:+UseSerialGC", "-Xmx" + strconv.Itoa(64+16*threads) + "m", "-XX:-UsePerfData",
+		"-jar", WorkerJar, "--threads", strconv.Itoa(threads), "--warmup", WarmupFile,
 	}
+}
+
+// Request is one lint for the JVM: Files (absolute paths) are checked with
+// every other Java source under Dir against the Java SE API of Release.
+type Request struct {
+	Release string
+	Dir     string
+	Files   []string
 }
 
 // DefaultEnv is the scrubbed tool environment of contract section 9.3.
@@ -67,22 +73,22 @@ var (
 	// a running JVM (nothing was sent) or with the request in flight (its
 	// reply is discarded on arrival), or the run budget passed (the JVM was
 	// poisoned and has been killed). Serve answers 504 timeout.
-	ErrTimeout = errors.New("checkstyle worker: deadline exceeded")
+	ErrTimeout = errors.New("javac worker: deadline exceeded")
 	// ErrRestarted: the JVM died or was replaced with the request in
 	// flight. Serve answers 503 linter_not_ready.
-	ErrRestarted = errors.New("checkstyle worker: restarted while the request was in flight")
+	ErrRestarted = errors.New("javac worker: restarted while the request was in flight")
 	// ErrFailed: the JVM failed to start too many times in a row; the
 	// worker does not recover. Serve answers 503 linter_not_ready and
 	// readiness reports failed.
-	ErrFailed = errors.New("checkstyle worker: failed to start")
+	ErrFailed = errors.New("javac worker: failed to start")
 	// ErrClosed: Close was called.
-	ErrClosed = errors.New("checkstyle worker: closed")
+	ErrClosed = errors.New("javac worker: closed")
 )
 
 // Config configures a Worker. Only Threads is required; the rest default
 // to the image layout and the contract's values.
 type Config struct {
-	// Threads is the JVM audit pool size and the bound on requests in
+	// Threads is the JVM compiler pool size and the bound on requests in
 	// flight (serve's --workers).
 	Threads int
 	// Argv is the child command; defaults to DefaultArgv(Threads).
@@ -92,8 +98,8 @@ type Config struct {
 	Env []string
 	// Dir is the child's working directory; defaults to "/".
 	Dir string
-	// WarmupFiles is the warm-up request; defaults to WarmupFile.
-	WarmupFiles []string
+	// Warmup is the warm-up request; defaults to WarmupFile for Java 11.
+	Warmup Request
 	// WarmupTimeout bounds one start: launch plus the warm-up reply.
 	// Defaults to 60 seconds.
 	WarmupTimeout time.Duration
@@ -114,7 +120,7 @@ type Config struct {
 }
 
 // Output is a reply in the shape of a one-shot tool run, ready for the
-// checkstyle driver's Parse: a success reply is (xml, nil, 0), an error
+// javac driver's Parse: a success reply is (report, nil, 0), an error
 // reply is (nil, message, 1).
 type Output struct {
 	Stdout   []byte
@@ -122,7 +128,7 @@ type Output struct {
 	ExitCode int
 }
 
-// Worker supervises the resident checkstyle JVM. It is safe for
+// Worker supervises the resident javac JVM. It is safe for
 // concurrent use.
 type Worker struct {
 	cfg  Config
@@ -147,7 +153,7 @@ type Worker struct {
 // up the JVM in the background; watch Ready and Failed for the outcome.
 func Start(cfg Config) (*Worker, error) {
 	if cfg.Threads < 1 {
-		return nil, fmt.Errorf("checkstyle worker: threads must be at least 1, got %d", cfg.Threads)
+		return nil, fmt.Errorf("javac worker: threads must be at least 1, got %d", cfg.Threads)
 	}
 	if cfg.Argv == nil {
 		cfg.Argv = DefaultArgv(cfg.Threads)
@@ -158,8 +164,8 @@ func Start(cfg Config) (*Worker, error) {
 	if cfg.Dir == "" {
 		cfg.Dir = "/"
 	}
-	if cfg.WarmupFiles == nil {
-		cfg.WarmupFiles = []string{WarmupFile}
+	if cfg.Warmup.Files == nil {
+		cfg.Warmup = Request{Release: "11", Dir: path.Dir(WarmupFile), Files: []string{WarmupFile}}
 	}
 	if cfg.WarmupTimeout <= 0 {
 		cfg.WarmupTimeout = 60 * time.Second
@@ -254,11 +260,11 @@ func (w *Worker) Close() error {
 	return nil
 }
 
-// Check lints files (absolute paths) on the resident JVM. See the package
-// documentation for how the context's deadline and cancellation apply.
-func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
-	if len(files) == 0 {
-		return Output{}, errors.New("checkstyle worker: no files")
+// Check runs req on the resident JVM. See the package documentation for
+// how the context's deadline and cancellation apply.
+func (w *Worker) Check(ctx context.Context, req Request) (Output, error) {
+	if len(req.Files) == 0 {
+		return Output{}, errors.New("javac worker: no files")
 	}
 	select {
 	case w.sem <- struct{}{}:
@@ -284,7 +290,7 @@ func (w *Worker) Check(ctx context.Context, files []string) (Output, error) {
 		if ctx.Err() != nil {
 			return Output{}, ctxErr(ctx)
 		}
-		reply, sent := p.send(files)
+		reply, sent := p.send(req)
 		if !sent {
 			continue // died between await and send; await waits for the next one
 		}
@@ -400,7 +406,7 @@ func (w *Worker) output(r result) (Output, error) {
 	case r.errMsg != nil:
 		return Output{Stderr: []byte(*r.errMsg), ExitCode: 1}, nil
 	default:
-		return Output{Stdout: []byte(r.xml), ExitCode: 0}, nil
+		return Output{Stdout: r.report, ExitCode: 0}, nil
 	}
 }
 
@@ -423,10 +429,10 @@ func (w *Worker) supervise() {
 				return
 			}
 			failures++
-			w.cfg.Log(fmt.Sprintf("checkstyle worker: start %d failed: %v", failures, err))
+			w.cfg.Log(fmt.Sprintf("javac worker: start %d failed: %v", failures, err))
 			if failures > len(w.cfg.Backoff) {
 				w.mu.Lock()
-				w.failErr = fmt.Errorf("checkstyle worker failed to start %d times in a row: %w", failures, err)
+				w.failErr = fmt.Errorf("javac worker failed to start %d times in a row: %w", failures, err)
 				close(w.failed)
 				w.broadcastLocked()
 				w.mu.Unlock()
@@ -457,7 +463,7 @@ func (w *Worker) supervise() {
 		}
 		w.broadcastLocked()
 		w.mu.Unlock()
-		w.cfg.Log(fmt.Sprintf("checkstyle worker %d: ready (pid %d)", p.gen, p.pid))
+		w.cfg.Log(fmt.Sprintf("javac worker %d: ready (pid %d)", p.gen, p.pid))
 
 		<-p.done
 
@@ -469,7 +475,7 @@ func (w *Worker) supervise() {
 		if closed {
 			return
 		}
-		w.cfg.Log(fmt.Sprintf("checkstyle worker %d: exited (%v); restarting", p.gen, p.cause()))
+		w.cfg.Log(fmt.Sprintf("javac worker %d: exited (%v); restarting", p.gen, p.cause()))
 	}
 }
 
@@ -515,7 +521,7 @@ func (w *Worker) launch() (*process, error) {
 		}
 		return nil, err
 	}
-	reply, sent := p.send(w.cfg.WarmupFiles)
+	reply, sent := p.send(w.cfg.Warmup)
 	if !sent {
 		return fail(fmt.Errorf("exited before warm-up: %v", p.cause()))
 	}
@@ -528,8 +534,8 @@ func (w *Worker) launch() (*process, error) {
 			return fail(fmt.Errorf("exited during warm-up: %v", p.cause()))
 		case r.errMsg != nil:
 			return fail(fmt.Errorf("warm-up lint failed: %s", *r.errMsg))
-		case !bytes.Contains([]byte(r.xml), []byte("</checkstyle>")):
-			return fail(errors.New("warm-up reply holds no checkstyle report"))
+		case !validReport(r.report):
+			return fail(errors.New("warm-up reply holds no javac report"))
 		}
 		return p, nil
 	case <-timer.C:
@@ -537,9 +543,18 @@ func (w *Worker) launch() (*process, error) {
 	}
 }
 
+// validReport reports whether a success reply is a report object with a
+// findings array, the shape the javac driver parses.
+func validReport(report []byte) bool {
+	var r struct {
+		Findings []json.RawMessage `json:"findings"`
+	}
+	return json.Unmarshal(report, &r) == nil && r.Findings != nil
+}
+
 // result is one decoded reply, or err when the JVM died first.
 type result struct {
-	xml    string
+	report []byte
 	errMsg *string
 	err    error
 }
@@ -577,7 +592,7 @@ func spawn(cfg Config, gen int) (*process, error) {
 		done:    make(chan struct{}),
 		pending: map[uint64]chan result{},
 	}
-	cmd.Stderr = &lineLogger{prefix: fmt.Sprintf("checkstyle worker %d: ", gen), log: cfg.Log}
+	cmd.Stderr = &lineLogger{prefix: fmt.Sprintf("javac worker %d: ", gen), log: cfg.Log}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -596,18 +611,20 @@ func spawn(cfg Config, gen int) (*process, error) {
 }
 
 type request struct {
-	ID    uint64   `json:"id"`
-	Files []string `json:"files"`
+	ID      uint64   `json:"id"`
+	Release string   `json:"release"`
+	Dir     string   `json:"dir"`
+	Files   []string `json:"files"`
 }
 
 type replyLine struct {
-	ID    uint64  `json:"id"`
-	XML   *string `json:"xml"`
-	Error *string `json:"error"`
+	ID     uint64          `json:"id"`
+	Report json.RawMessage `json:"report"`
+	Error  *string         `json:"error"`
 }
 
 // send writes one request; sent is false when the process is already dead.
-func (p *process) send(files []string) (<-chan result, bool) {
+func (p *process) send(req Request) (<-chan result, bool) {
 	ch := make(chan result, 1)
 	p.mu.Lock()
 	if p.dead {
@@ -619,7 +636,7 @@ func (p *process) send(files []string) (<-chan result, bool) {
 	p.pending[id] = ch
 	p.mu.Unlock()
 
-	line, err := json.Marshal(request{ID: id, Files: files})
+	line, err := json.Marshal(request{ID: id, Release: req.Release, Dir: req.Dir, Files: req.Files})
 	if err != nil {
 		panic(err) // a struct of strings always marshals
 	}
@@ -682,7 +699,9 @@ func (p *process) read(stdout io.Reader, maxBytes int) {
 			break
 		}
 		var r replyLine
-		if err := json.Unmarshal(line, &r); err != nil || r.ID == 0 || (r.XML == nil) == (r.Error == nil) {
+		err = json.Unmarshal(line, &r)
+		hasReport := len(r.Report) > 0 && string(r.Report) != "null"
+		if err != nil || r.ID == 0 || hasReport == (r.Error != nil) {
 			p.kill(fmt.Sprintf("invalid reply line %q", truncate(line, 200)))
 			_, _ = io.Copy(io.Discard, br)
 			break
@@ -692,11 +711,11 @@ func (p *process) read(stdout io.Reader, maxBytes int) {
 		delete(p.pending, r.ID)
 		p.mu.Unlock()
 		if !ok {
-			p.log(fmt.Sprintf("checkstyle worker %d: ignoring reply for unknown request %d", p.gen, r.ID))
+			p.log(fmt.Sprintf("javac worker %d: ignoring reply for unknown request %d", p.gen, r.ID))
 			continue
 		}
-		if r.XML != nil {
-			ch <- result{xml: *r.XML}
+		if hasReport {
+			ch <- result{report: r.Report}
 		} else {
 			ch <- result{errMsg: r.Error}
 		}
