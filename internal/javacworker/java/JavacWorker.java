@@ -1,3 +1,9 @@
+import com.sun.source.tree.ClassTree;
+import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.Tree;
+import com.sun.source.util.TreePath;
+import com.sun.source.util.Trees;
+import com.sun.tools.javac.api.JavacTaskImpl;
 import com.sun.tools.javac.api.JavacTaskPool;
 import com.sun.tools.javac.platform.JDKPlatformProvider;
 import com.sun.tools.javac.platform.PlatformDescription;
@@ -26,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.lang.model.element.Element;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaFileManager;
@@ -247,7 +254,8 @@ public final class JavacWorker {
         final List<Path> units = new ArrayList<>(reported.keySet());
         units.addAll(siblings(dir, reported));
 
-        final List<Diagnostic<? extends JavaFileObject>> diagnostics = COMPILER.get().analyze(release, units);
+        final List<Diagnostic<? extends JavaFileObject>> diagnostics =
+                COMPILER.get().analyze(release, units, reported.keySet());
 
         out.append("{\"tool\":");
         Json.quote(out, TOOL + " --release " + release);
@@ -350,14 +358,18 @@ public final class JavacWorker {
      * that release's API signatures (the ct.sym data --release reads), built
      * once instead of on every task. User sources only ever reach javac as
      * compilation units, which the task pool forgets after each task;
-     * nothing is looked up on a source or class path.
+     * nothing is looked up on a source or class path. Every unit is parsed
+     * and entered, but only the classes of the reported files are
+     * attributed and flow-analysed, so a sibling costs its declarations,
+     * not its method bodies.
      */
     private static final class Compiler {
         private final JavacTaskPool pool = new JavacTaskPool(4);
         private final Map<String, JavaFileManager> platforms = new HashMap<>();
         private final PlatformProvider provider = new JDKPlatformProvider();
 
-        List<Diagnostic<? extends JavaFileObject>> analyze(String release, List<Path> units) throws IOException {
+        List<Diagnostic<? extends JavaFileObject>> analyze(String release, List<Path> units, java.util.Set<Path> reported)
+                throws IOException {
             final StandardJavaFileManager fm = (StandardJavaFileManager) platform(release);
             final List<String> options = List.of(
                     "-source", release, "-target", release,
@@ -366,11 +378,25 @@ public final class JavacWorker {
             final DiagnosticCollector<JavaFileObject> collector = new DiagnosticCollector<>();
             final Iterable<? extends JavaFileObject> sources = fm.getJavaFileObjectsFromPaths(units);
             return pool.getTask(null, fm, collector, options, null, sources, task -> {
-                try {
-                    task.analyze();
-                } catch (IOException ex) {
-                    throw new java.io.UncheckedIOException(ex);
+                final JavacTaskImpl impl = (JavacTaskImpl) task;
+                final Trees trees = Trees.instance(task);
+                final List<Element> classes = new ArrayList<>();
+                final Iterable<? extends CompilationUnitTree> parsed = impl.parse();
+                impl.enter();
+                for (CompilationUnitTree unit : parsed) {
+                    if (!reported.contains(Path.of(unit.getSourceFile().toUri()).normalize())) {
+                        continue;
+                    }
+                    for (Tree decl : unit.getTypeDecls()) {
+                        if (decl instanceof ClassTree) {
+                            final Element element = trees.getElement(new TreePath(new TreePath(unit), decl));
+                            if (element != null) {
+                                classes.add(element);
+                            }
+                        }
+                    }
                 }
+                impl.analyze(classes);
                 return collector.getDiagnostics();
             });
         }

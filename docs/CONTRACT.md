@@ -640,9 +640,11 @@ the student file through flow analysis, without writing classes, as
 
 - **Sources.** Every other regular `.java` file in the workspace (section
   9.2), outside the top-level `.zinc/` and `examination-assets/`
-  directories, is compiled with the student file, so a class the
-  question's assets provide resolves as it does when the submission is
-  graded. Findings are reported for the student file only. Nothing is
+  directories, is parsed and entered with the student file, so a class
+  the question's assets provide resolves as it does when the submission
+  is graded. Only the student file's classes are attributed, so the
+  method bodies of the other files cost nothing, and findings are
+  reported for the student file only. Nothing is
   looked up on a source or class path. More than 500 such files fail the
   request.
 - **Warm-up.** Before the server is ready, the worker checks a bundled
@@ -868,12 +870,13 @@ to its log.
 **Check.** Each pool thread keeps a javac task pool, which reuses the
 symbol tables of earlier tasks and forgets every class a task's
 compilation units declared, and per release a file manager over that
-release's `ct.sym` signatures, built on first use. A request compiles the
-named files first and the other sources after them, with `-source <N>
--target <N> -proc:none -implicit:none -encoding UTF-8`, empty class and
-source paths, and up to 1000 errors and 1000 warnings. Because the named
-files come first, a class a sibling declares again is reported as a
-duplicate in the sibling. Error diagnostics map to `error`, warnings to
+release's `ct.sym` signatures, built on first use. A request parses and
+enters the named files first and the other sources after them, then
+attributes and flow-analyses the classes the named files declare, with
+`-source <N> -target <N> -proc:none -implicit:none -encoding UTF-8`,
+empty class and source paths, and up to 1000 errors and 1000 warnings.
+Because the named files come first, a class a sibling declares again is
+reported as a duplicate in the sibling. Error diagnostics map to `error`, warnings to
 `warning`, and notes are dropped. Messages use the English locale and
 keep javac's `symbol:` and `location:` lines. `rule` is the diagnostic
 code. Columns count code points from the line start, a tab as one. A
