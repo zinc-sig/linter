@@ -16,6 +16,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.MemoryType;
+import java.lang.management.MemoryUsage;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -65,6 +69,15 @@ public final class JavacWorker {
 
     /** Each pool thread keeps its own compiler state; none of it is shared. */
     private static final ThreadLocal<Compiler> COMPILER = ThreadLocal.withInitial(Compiler::new);
+
+    /** A thread rebuilds its compiler after this many requests whatever the heap holds. */
+    private static final int MAX_USES = Integer.getInteger("javacworker.maxUses", 20_000);
+
+    /** A thread rebuilds no sooner than this, so a heap that stays full cannot rebuild every request. */
+    private static final int MIN_USES = Integer.getInteger("javacworker.minUses", 200);
+
+    /** The heap pools whose crossings of their collection threshold make the threads rebuild. */
+    private static volatile List<MemoryPoolMXBean> watchedPools = List.of();
 
     private JavacWorker() {
     }
@@ -119,6 +132,7 @@ public final class JavacWorker {
         if (warmup != null) {
             warm(pool, threads, warmup);
         }
+        watchHeap();
 
         final BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         String line;
@@ -192,6 +206,54 @@ public final class JavacWorker {
         finished.await();
     }
 
+    /**
+     * Sets the collection threshold of the old generation halfway between
+     * what it holds after warm-up and its maximum. javac's task pool keeps
+     * every name, package and class it has seen, so a compiler grows with
+     * the requests it serves; once the old generation is still above the
+     * threshold after a collection, each thread rebuilds its compiler on its
+     * next request.
+     */
+    private static void watchHeap() {
+        System.gc();
+        final List<MemoryPoolMXBean> pools = new ArrayList<>();
+        for (MemoryPoolMXBean p : ManagementFactory.getMemoryPoolMXBeans()) {
+            // Only the old generation supports a usage threshold.
+            if (p.getType() != MemoryType.HEAP || !p.isUsageThresholdSupported()
+                    || !p.isCollectionUsageThresholdSupported()) {
+                continue;
+            }
+            final long max = p.getUsage().getMax();
+            final MemoryUsage after = p.getCollectionUsage();
+            if (max > 0 && after != null) {
+                p.setCollectionUsageThreshold(after.getUsed() + (max - after.getUsed()) / 2);
+                pools.add(p);
+            }
+        }
+        watchedPools = List.copyOf(pools);
+    }
+
+    /** How many collections have so far left a watched pool above its threshold. */
+    private static long heapCrossings() {
+        long n = 0;
+        for (MemoryPoolMXBean p : watchedPools) {
+            n += p.getCollectionUsageThresholdCount();
+        }
+        return n;
+    }
+
+    /** The calling thread's compiler, rebuilt first if it has grown too large or served too many requests. */
+    private static Compiler compiler() {
+        Compiler c = COMPILER.get();
+        if (c.uses >= MAX_USES || c.uses >= MIN_USES && heapCrossings() > c.crossings) {
+            c.close();
+            c = new Compiler();
+            COMPILER.set(c);
+        }
+        c.uses++;
+        return c;
+    }
+
     private static long requireId(Object value) {
         if (value instanceof Double) {
             final double d = (Double) value;
@@ -255,7 +317,7 @@ public final class JavacWorker {
         units.addAll(siblings(dir, reported));
 
         final List<Diagnostic<? extends JavaFileObject>> diagnostics =
-                COMPILER.get().analyze(release, units, reported.keySet());
+                compiler().analyze(release, units, reported.keySet());
 
         out.append("{\"tool\":");
         Json.quote(out, TOOL + " --release " + release);
@@ -366,7 +428,28 @@ public final class JavacWorker {
     private static final class Compiler {
         private final JavacTaskPool pool = new JavacTaskPool(4);
         private final Map<String, JavaFileManager> platforms = new HashMap<>();
+        private final List<PlatformDescription> descriptions = new ArrayList<>();
         private final PlatformProvider provider = new JDKPlatformProvider();
+
+        /** Heap crossings when this compiler was built. */
+        final long crossings = heapCrossings();
+
+        /** Requests this compiler has served. */
+        int uses;
+
+        /** Closes the file managers and the ct.sym file systems they read. */
+        void close() {
+            try {
+                for (JavaFileManager fm : platforms.values()) {
+                    fm.close();
+                }
+                for (PlatformDescription d : descriptions) {
+                    d.close();
+                }
+            } catch (IOException ex) {
+                System.err.println("javac-worker: closing a compiler: " + causeChain(ex));
+            }
+        }
 
         List<Diagnostic<? extends JavaFileObject>> analyze(String release, List<Path> units, java.util.Set<Path> reported)
                 throws IOException {
@@ -418,6 +501,7 @@ public final class JavacWorker {
             } catch (PlatformProvider.PlatformNotSupported ex) {
                 throw new IOException("release " + release + " is not supported by " + TOOL);
             }
+            descriptions.add(description);
             fm = description.getFileManager();
             final StandardJavaFileManager standard = (StandardJavaFileManager) fm;
             standard.setLocation(StandardLocation.CLASS_PATH, List.of());

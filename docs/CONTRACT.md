@@ -666,7 +666,8 @@ the student file through flow analysis, without writing classes, as
   `/healthz/ready` answers `failed`.
 - **Budget.** The JVM runs with `-XX:+UseSerialGC` and a heap of 64 MB
   plus 16 MB per pool thread (`-Xmx128m` at the default four). Each pool
-  thread keeps its own compiler, about 8 MB of live heap. Measured on two
+  thread keeps its own compiler, about 8 MB of live heap, which Appendix A
+  bounds by rebuilding the compiler as the heap fills. Measured on two
   CPUs with four threads: about 145 MB resident and 17 JVM threads idle
   after the warm-up, and about 220 MB resident under load. The warm-up
   takes about 2 seconds with four threads and 11 seconds with 64. Every
@@ -818,7 +819,9 @@ javac's task pool and platform provider from the `jdk.compiler` packages
 `com.sun.tools.javac.api` and `com.sun.tools.javac.platform`, which the
 jar's manifest exports to it. The jlink module set is `java.compiler`,
 `jdk.compiler` (which carries `lib/ct.sym`, the API signatures of every
-`--release` version) and `jdk.zipfs` (which reads `ct.sym`). The warm-up
+`--release` version), `jdk.zipfs` (which reads `ct.sym`) and
+`java.management` (which reports the heap use that triggers a rebuild,
+below). The warm-up
 sample is `/opt/javac-warmup/Warmup.java`.
 
 **Launch.**
@@ -868,9 +871,9 @@ to its log.
   32 MiB is not a valid reply.
 
 **Check.** Each pool thread keeps a javac task pool, which reuses the
-symbol tables of earlier tasks and forgets every class a task's
-compilation units declared, and per release a file manager over that
-release's `ct.sym` signatures, built on first use. A request parses and
+symbol tables of earlier tasks and removes the classes a task's
+compilation units declared from its class table, and per release a file
+manager over that release's `ct.sym` signatures, built on first use. A request parses and
 enters the named files first and the other sources after them, then
 attributes and flow-analyses the classes the named files declare, with
 `-source <N> -target <N> -proc:none -implicit:none -encoding UTF-8`,
@@ -883,6 +886,18 @@ code. Columns count code points from the line start, a tab as one. A
 range that continues past its first line ends at that line's end.
 `System.out` is pointed at stderr at startup, so nothing javac prints can
 reach the reply stream.
+
+**Rebuild.** A thread's compiler still grows with the requests it serves:
+the task pool keeps every name, package and package member it has seen,
+and the file manager keeps an entry per source file. After the warm-up the
+worker runs a collection and sets the old generation's collection usage
+threshold halfway between its use and its maximum. Each time a collection
+leaves the old generation above that threshold, every thread that has
+served at least 200 requests on its current compiler closes it (its file
+managers and `ct.sym` file systems) and builds a new one before its next
+request. A thread also does so after 20,000 requests. The rebuilt
+compiler is cold, which adds about 0.3 seconds of CPU to that one
+request; no request fails and the worker stays ready.
 
 **Exit codes.** `0` after stdin EOF; `2` for bad arguments; `3` for a
 request line it cannot parse; `4` on `OutOfMemoryError`, without a
