@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,6 +46,14 @@ type workerReply struct {
 // requests and returns the replies by id.
 func runWorker(t *testing.T, dir string, requests []map[string]any, jvm ...string) map[int]workerReply {
 	t.Helper()
+	replies, _ := runWorkerStderr(t, dir, requests, workerArgv, jvm...)
+	return replies
+}
+
+// runWorkerStderr is runWorker with the worker's own argv; it also returns
+// what the worker wrote to stderr.
+func runWorkerStderr(t *testing.T, dir string, requests []map[string]any, worker []string, jvm ...string) (map[int]workerReply, string) {
+	t.Helper()
 	var stdin bytes.Buffer
 	for i, req := range requests {
 		req["id"] = i + 1
@@ -55,7 +64,7 @@ func runWorker(t *testing.T, dir string, requests []map[string]any, jvm ...strin
 	// section 9.3); Java derives its file name encoding from it.
 	args := []string{"run", "--rm", "-i", "-e", "LANG=C.UTF-8", "-v", dir + ":/workspace:ro",
 		"--entrypoint", "/opt/java/bin/java", image()}
-	args = append(append(args, jvm...), workerArgv...)
+	args = append(append(args, jvm...), worker...)
 	argv := append(append([]string{}, dockerCmd()...), args...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = &stdin
@@ -80,7 +89,7 @@ func runWorker(t *testing.T, dir string, requests []map[string]any, jvm ...strin
 	if len(replies) != len(requests) {
 		t.Fatalf("got %d replies, want %d\nstderr: %s", len(replies), len(requests), stderr.String())
 	}
-	return replies
+	return replies, stderr.String()
 }
 
 func writeTree(t *testing.T, dir string, files map[string]string) {
@@ -157,6 +166,32 @@ func TestJavacWorkerMatchesCLI(t *testing.T) {
 func TestJavacWorkerIsolatesWorkspaces(t *testing.T) {
 	t.Run("reused compilers", func(t *testing.T) { checkIsolation(t) })
 	t.Run("rebuilt compilers", func(t *testing.T) { checkIsolation(t, "-Djavacworker.maxUses=2") })
+}
+
+// TestJavacWorkerKeepsRebuilding: threads rebuild one at a time, and each
+// rebuilt compiler lets the next rebuild happen after its first request.
+// One thread makes the count exact: the warm-up is the first request on
+// the first compiler, so with rebuilds due every two requests, 200
+// requests rebuild 100 times. A rebuild that never let the next one
+// happen would rebuild once.
+func TestJavacWorkerKeepsRebuilding(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"Main.java": "public class Main { int f() { return 1; } }\n"})
+	requests := make([]map[string]any, 200)
+	for i := range requests {
+		requests[i] = map[string]any{"release": "11", "dir": "/workspace", "files": []string{"Main.java"}}
+	}
+	oneThread := append([]string{}, workerArgv...)
+	oneThread[slices.Index(oneThread, "--threads")+1] = "1"
+	replies, stderr := runWorkerStderr(t, dir, requests, oneThread, "-Djavacworker.maxUses=2")
+	for id, r := range replies {
+		if r.Error != nil {
+			t.Fatalf("request %d failed: %s", id, *r.Error)
+		}
+	}
+	if n := strings.Count(stderr, "rebuilt a compiler"); n != 100 {
+		t.Fatalf("%d rebuilds in 200 requests due every 2, want 100\nstderr: %s", n, stderr)
+	}
 }
 
 func checkIsolation(t *testing.T, jvm ...string) {

@@ -80,6 +80,12 @@ public final class JavacWorker {
     /** The heap pools whose crossings of their collection threshold make the threads rebuild. */
     private static volatile List<MemoryPoolMXBean> watchedPools = List.of();
 
+    /**
+     * Held from a rebuild until the new compiler has served its first, cold
+     * request, so threads rebuild one at a time and the others keep serving.
+     */
+    private static final AtomicBoolean REBUILDING = new AtomicBoolean();
+
     private JavacWorker() {
     }
 
@@ -219,8 +225,8 @@ public final class JavacWorker {
      * what it holds after warm-up and its maximum. javac's task pool keeps
      * every name and package it has seen, so a compiler grows with the
      * requests it serves; once a full collection leaves the old generation
-     * above the threshold, each thread rebuilds its compiler on its next
-     * request.
+     * above the threshold, the threads rebuild their compilers one at a
+     * time.
      */
     private static void watchHeap() {
         System.gc();
@@ -250,18 +256,38 @@ public final class JavacWorker {
         return n;
     }
 
-    /** The calling thread's compiler, rebuilt first if it has grown too large or served too many requests. */
+    /**
+     * The calling thread's compiler, rebuilt first if it has grown too large
+     * or served too many requests and no other thread is rebuilding. A
+     * rebuilt compiler is cold; the caller passes it to {@link #warmed}
+     * after its first request.
+     */
     private static Compiler compiler() {
         Compiler c = COMPILER.get();
-        if (c.uses >= MAX_USES || c.uses >= MIN_USES && heapCrossings() > c.crossings) {
+        if ((c.uses >= MAX_USES || c.uses >= MIN_USES && heapCrossings() > c.crossings)
+                && REBUILDING.compareAndSet(false, true)) {
             final Compiler old = c;
-            c = new Compiler();
+            try {
+                c = new Compiler();
+            } catch (RuntimeException | Error ex) {
+                REBUILDING.set(false);
+                throw ex;
+            }
+            c.cold = true;
             COMPILER.set(c);
             System.err.println("javac-worker: rebuilt a compiler after " + old.uses + " requests");
             old.close();
         }
         c.uses++;
         return c;
+    }
+
+    /** Lets the next thread rebuild once a rebuilt compiler has served a request. */
+    private static void warmed(Compiler c) {
+        if (c.cold) {
+            c.cold = false;
+            REBUILDING.set(false);
+        }
     }
 
     private static long requireId(Object value) {
@@ -326,8 +352,13 @@ public final class JavacWorker {
         final List<Path> units = new ArrayList<>(reported.keySet());
         units.addAll(siblings(dir, reported));
 
-        final List<Diagnostic<? extends JavaFileObject>> diagnostics =
-                compiler().analyze(release, units, reported.keySet());
+        final Compiler compiler = compiler();
+        final List<Diagnostic<? extends JavaFileObject>> diagnostics;
+        try {
+            diagnostics = compiler.analyze(release, units, reported.keySet());
+        } finally {
+            warmed(compiler);
+        }
 
         out.append("{\"tool\":");
         Json.quote(out, TOOL + " --release " + release);
@@ -446,6 +477,9 @@ public final class JavacWorker {
 
         /** Requests this compiler has served. */
         int uses;
+
+        /** Rebuilt and not yet past its first request; it holds {@link #REBUILDING}. */
+        boolean cold;
 
         /** Closes the file managers and the ct.sym file systems they read; a failure only logs. */
         void close() {

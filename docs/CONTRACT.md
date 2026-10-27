@@ -899,7 +899,10 @@ request on the current one if it has served fewer, and closes the old
 one's file managers and `ct.sym` file systems. A thread also does so after
 20,000 requests on one compiler. Each rebuild writes a line to stderr. The
 new compiler is cold, which adds about 0.3 seconds of CPU to that one
-request; the worker stays ready, and a failure to close is only logged.
+request. Threads rebuild one at a time: a thread that is due while another
+thread's new compiler has not finished its first request keeps its own
+compiler until then, so the other threads keep serving. The worker stays
+ready, and a failure to close is only logged.
 
 **Exit codes.** `0` after stdin EOF; `2` for bad arguments; `3` for a
 request line it cannot parse; `4` on `OutOfMemoryError`, without a
