@@ -41,8 +41,10 @@ RUN javac -source 21 -target 21 -proc:none -Xlint:all,-path,-options -Werror \
 # A stripped runtime with the compiler (output kept off /opt/java, where
 # this base image parks its own JDK). jdk.compiler carries lib/ct.sym, the
 # API signatures of every --release version; jdk.zipfs is the file system
-# javac opens ct.sym with, a service that jlink does not add by itself.
-RUN jlink --add-modules java.compiler,jdk.compiler,jdk.zipfs \
+# javac opens ct.sym with, a service that jlink does not add by itself;
+# java.management reports the old generation's use after a collection,
+# which decides when the worker rebuilds a thread's compiler.
+RUN jlink --add-modules java.compiler,jdk.compiler,jdk.zipfs,java.management \
     --strip-debug --no-header-files --no-man-pages --compress=zip-6 \
     --output /jlinked \
     && test -f /jlinked/lib/ct.sym

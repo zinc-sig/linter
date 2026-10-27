@@ -16,6 +16,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.MemoryType;
+import java.lang.management.MemoryUsage;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,6 +34,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.lang.model.element.Element;
@@ -65,6 +70,21 @@ public final class JavacWorker {
 
     /** Each pool thread keeps its own compiler state; none of it is shared. */
     private static final ThreadLocal<Compiler> COMPILER = ThreadLocal.withInitial(Compiler::new);
+
+    /** A thread rebuilds its compiler after this many requests whatever the heap holds. */
+    private static final int MAX_USES = Integer.getInteger("javacworker.maxUses", 20_000);
+
+    /** A thread rebuilds no sooner than this, so a heap that stays full cannot rebuild every request. */
+    private static final int MIN_USES = Integer.getInteger("javacworker.minUses", 200);
+
+    /** The heap pools whose crossings of their collection threshold make the threads rebuild. */
+    private static volatile List<MemoryPoolMXBean> watchedPools = List.of();
+
+    /**
+     * Held from a rebuild until the new compiler has served its first, cold
+     * request, so threads rebuild one at a time and the others keep serving.
+     */
+    private static final AtomicBoolean REBUILDING = new AtomicBoolean();
 
     private JavacWorker() {
     }
@@ -116,8 +136,12 @@ public final class JavacWorker {
             thread.setDaemon(true);
             return thread;
         });
-        if (warmup != null) {
-            warm(pool, threads, warmup);
+        // The heap threshold is set from the warm compilers' footprint, so
+        // without a complete warm-up only the request count rebuilds them.
+        if (warmup != null && warm(pool, threads, warmup)) {
+            watchHeap();
+        } else {
+            System.err.println("javac-worker: no complete warm-up; compilers are rebuilt every " + MAX_USES + " requests only");
         }
 
         final BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
@@ -170,10 +194,12 @@ public final class JavacWorker {
     /**
      * Checks the warm-up sample once on every pool thread before the first
      * request is read, so no student pays for a cold compiler. The latch
-     * keeps each thread busy until all of them have taken a task.
+     * keeps each thread busy until all of them have taken a task. Returns
+     * whether every thread checked the sample.
      */
-    private static void warm(ExecutorService pool, int threads, String file) throws InterruptedException {
+    private static boolean warm(ExecutorService pool, int threads, String file) throws InterruptedException {
         final Path path = Path.of(file);
+        final AtomicBoolean ok = new AtomicBoolean(true);
         final CountDownLatch started = new CountDownLatch(threads);
         final CountDownLatch finished = new CountDownLatch(threads);
         for (int i = 0; i < threads; i++) {
@@ -183,6 +209,7 @@ public final class JavacWorker {
                     started.await();
                     check("11", path.getParent(), List.of(path.toString()), new StringBuilder());
                 } catch (Exception ex) {
+                    ok.set(false);
                     System.err.println("javac-worker: warm-up failed: " + causeChain(ex));
                 } finally {
                     finished.countDown();
@@ -190,6 +217,77 @@ public final class JavacWorker {
             });
         }
         finished.await();
+        return ok.get();
+    }
+
+    /**
+     * Sets the collection threshold of the old generation halfway between
+     * what it holds after warm-up and its maximum. javac's task pool keeps
+     * every name and package it has seen, so a compiler grows with the
+     * requests it serves; once a full collection leaves the old generation
+     * above the threshold, the threads rebuild their compilers one at a
+     * time.
+     */
+    private static void watchHeap() {
+        System.gc();
+        final List<MemoryPoolMXBean> pools = new ArrayList<>();
+        for (MemoryPoolMXBean p : ManagementFactory.getMemoryPoolMXBeans()) {
+            // Only the old generation supports a usage threshold.
+            if (p.getType() != MemoryType.HEAP || !p.isUsageThresholdSupported()
+                    || !p.isCollectionUsageThresholdSupported()) {
+                continue;
+            }
+            final long max = p.getUsage().getMax();
+            final MemoryUsage after = p.getCollectionUsage();
+            if (max > 0 && after != null) {
+                p.setCollectionUsageThreshold(after.getUsed() + (max - after.getUsed()) / 2);
+                pools.add(p);
+            }
+        }
+        watchedPools = List.copyOf(pools);
+    }
+
+    /** How many full collections have so far left a watched pool above its threshold. */
+    private static long heapCrossings() {
+        long n = 0;
+        for (MemoryPoolMXBean p : watchedPools) {
+            n += p.getCollectionUsageThresholdCount();
+        }
+        return n;
+    }
+
+    /**
+     * The calling thread's compiler, rebuilt first if it has grown too large
+     * or served too many requests and no other thread is rebuilding. A
+     * rebuilt compiler is cold; the caller passes it to {@link #warmed}
+     * after its first request.
+     */
+    private static Compiler compiler() {
+        Compiler c = COMPILER.get();
+        if ((c.uses >= MAX_USES || c.uses >= MIN_USES && heapCrossings() > c.crossings)
+                && REBUILDING.compareAndSet(false, true)) {
+            final Compiler old = c;
+            try {
+                c = new Compiler();
+            } catch (RuntimeException | Error ex) {
+                REBUILDING.set(false);
+                throw ex;
+            }
+            c.cold = true;
+            COMPILER.set(c);
+            System.err.println("javac-worker: rebuilt a compiler after " + old.uses + " requests");
+            old.close();
+        }
+        c.uses++;
+        return c;
+    }
+
+    /** Lets the next thread rebuild once a rebuilt compiler has served a request. */
+    private static void warmed(Compiler c) {
+        if (c.cold) {
+            c.cold = false;
+            REBUILDING.set(false);
+        }
     }
 
     private static long requireId(Object value) {
@@ -254,8 +352,13 @@ public final class JavacWorker {
         final List<Path> units = new ArrayList<>(reported.keySet());
         units.addAll(siblings(dir, reported));
 
-        final List<Diagnostic<? extends JavaFileObject>> diagnostics =
-                COMPILER.get().analyze(release, units, reported.keySet());
+        final Compiler compiler = compiler();
+        final List<Diagnostic<? extends JavaFileObject>> diagnostics;
+        try {
+            diagnostics = compiler.analyze(release, units, reported.keySet());
+        } finally {
+            warmed(compiler);
+        }
 
         out.append("{\"tool\":");
         Json.quote(out, TOOL + " --release " + release);
@@ -357,8 +460,8 @@ public final class JavacWorker {
      * symbol tables between requests, and per release a file manager over
      * that release's API signatures (the ct.sym data --release reads), built
      * once instead of on every task. User sources only ever reach javac as
-     * compilation units, which the task pool forgets after each task;
-     * nothing is looked up on a source or class path. Every unit is parsed
+     * compilation units, whose classes the task pool removes from its class
+     * table after each task; nothing is looked up on a source or class path. Every unit is parsed
      * and entered, but only the classes of the reported files are
      * attributed and flow-analysed, so a sibling costs its declarations,
      * not its method bodies.
@@ -366,7 +469,30 @@ public final class JavacWorker {
     private static final class Compiler {
         private final JavacTaskPool pool = new JavacTaskPool(4);
         private final Map<String, JavaFileManager> platforms = new HashMap<>();
+        private final List<PlatformDescription> descriptions = new ArrayList<>();
         private final PlatformProvider provider = new JDKPlatformProvider();
+
+        /** Heap crossings when this compiler was built. */
+        final long crossings = heapCrossings();
+
+        /** Requests this compiler has served. */
+        int uses;
+
+        /** Rebuilt and not yet past its first request; it holds {@link #REBUILDING}. */
+        boolean cold;
+
+        /** Closes the file managers and the ct.sym file systems they read; a failure only logs. */
+        void close() {
+            final List<java.io.Closeable> all = new ArrayList<>(platforms.values());
+            all.addAll(descriptions);
+            for (java.io.Closeable resource : all) {
+                try {
+                    resource.close();
+                } catch (Exception ex) {
+                    System.err.println("javac-worker: closing a compiler: " + causeChain(ex));
+                }
+            }
+        }
 
         List<Diagnostic<? extends JavaFileObject>> analyze(String release, List<Path> units, java.util.Set<Path> reported)
                 throws IOException {
@@ -418,6 +544,7 @@ public final class JavacWorker {
             } catch (PlatformProvider.PlatformNotSupported ex) {
                 throw new IOException("release " + release + " is not supported by " + TOOL);
             }
+            descriptions.add(description);
             fm = description.getFileManager();
             final StandardJavaFileManager standard = (StandardJavaFileManager) fm;
             standard.setLocation(StandardLocation.CLASS_PATH, List.of());

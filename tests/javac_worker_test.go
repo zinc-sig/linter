@@ -6,9 +6,12 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -39,8 +42,17 @@ type workerReply struct {
 }
 
 // runWorker starts the resident worker over dir mounted at /workspace,
-// writes one request per entry of requests and returns the replies by id.
-func runWorker(t *testing.T, dir string, requests []map[string]any) map[int]workerReply {
+// with jvm ahead of the Appendix A options, writes one request per entry of
+// requests and returns the replies by id.
+func runWorker(t *testing.T, dir string, requests []map[string]any, jvm ...string) map[int]workerReply {
+	t.Helper()
+	replies, _ := runWorkerStderr(t, dir, requests, workerArgv, jvm...)
+	return replies
+}
+
+// runWorkerStderr is runWorker with the worker's own argv; it also returns
+// what the worker wrote to stderr.
+func runWorkerStderr(t *testing.T, dir string, requests []map[string]any, worker []string, jvm ...string) (map[int]workerReply, string) {
 	t.Helper()
 	var stdin bytes.Buffer
 	for i, req := range requests {
@@ -52,7 +64,7 @@ func runWorker(t *testing.T, dir string, requests []map[string]any) map[int]work
 	// section 9.3); Java derives its file name encoding from it.
 	args := []string{"run", "--rm", "-i", "-e", "LANG=C.UTF-8", "-v", dir + ":/workspace:ro",
 		"--entrypoint", "/opt/java/bin/java", image()}
-	args = append(args, workerArgv...)
+	args = append(append(args, jvm...), worker...)
 	argv := append(append([]string{}, dockerCmd()...), args...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = &stdin
@@ -77,7 +89,7 @@ func runWorker(t *testing.T, dir string, requests []map[string]any) map[int]work
 	if len(replies) != len(requests) {
 		t.Fatalf("got %d replies, want %d\nstderr: %s", len(replies), len(requests), stderr.String())
 	}
-	return replies
+	return replies, stderr.String()
 }
 
 func writeTree(t *testing.T, dir string, files map[string]string) {
@@ -149,8 +161,40 @@ func TestJavacWorkerMatchesCLI(t *testing.T) {
 // reused compiler sees the workspaces in many orders. A class that one
 // workspace provides must resolve there and nowhere else, a duplicate of
 // the student class in a sibling is not reported, and the directories
-// that hold no program sources are not compiled.
+// that hold no program sources are not compiled. It runs again with each
+// thread rebuilding its compiler every two requests.
 func TestJavacWorkerIsolatesWorkspaces(t *testing.T) {
+	t.Run("reused compilers", func(t *testing.T) { checkIsolation(t) })
+	t.Run("rebuilt compilers", func(t *testing.T) { checkIsolation(t, "-Djavacworker.maxUses=2") })
+}
+
+// TestJavacWorkerKeepsRebuilding: threads rebuild one at a time, and each
+// rebuilt compiler lets the next rebuild happen after its first request.
+// One thread makes the count exact: the warm-up is the first request on
+// the first compiler, so with rebuilds due every two requests, 200
+// requests rebuild 100 times. A rebuild that never let the next one
+// happen would rebuild once.
+func TestJavacWorkerKeepsRebuilding(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"Main.java": "public class Main { int f() { return 1; } }\n"})
+	requests := make([]map[string]any, 200)
+	for i := range requests {
+		requests[i] = map[string]any{"release": "11", "dir": "/workspace", "files": []string{"Main.java"}}
+	}
+	oneThread := append([]string{}, workerArgv...)
+	oneThread[slices.Index(oneThread, "--threads")+1] = "1"
+	replies, stderr := runWorkerStderr(t, dir, requests, oneThread, "-Djavacworker.maxUses=2")
+	for id, r := range replies {
+		if r.Error != nil {
+			t.Fatalf("request %d failed: %s", id, *r.Error)
+		}
+	}
+	if n := strings.Count(stderr, "rebuilt a compiler"); n != 100 {
+		t.Fatalf("%d rebuilds in 200 requests due every 2, want 100\nstderr: %s", n, stderr)
+	}
+}
+
+func checkIsolation(t *testing.T, jvm ...string) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"A/Helper.java":   "class Helper { static int a() { return 1; } }\n",
@@ -188,7 +232,7 @@ func TestJavacWorkerIsolatesWorkspaces(t *testing.T) {
 			want = append(want, c.wantErr)
 		}
 	}
-	replies := runWorker(t, dir, requests)
+	replies := runWorker(t, dir, requests, jvm...)
 	for i, req := range requests {
 		r := replies[i+1]
 		if r.Error != nil {
@@ -198,6 +242,48 @@ func TestJavacWorkerIsolatesWorkspaces(t *testing.T) {
 		hasErr := strings.Contains(string(r.Report), "compiler.err.cant.resolve")
 		if hasErr != want[i] || strings.Contains(string(r.Report), "duplicate") {
 			t.Errorf("request %d %v: report %s, want an unresolved symbol: %v", i+1, req["files"], r.Report, want[i])
+		}
+	}
+}
+
+// TestJavacWorkerBoundsCompilerGrowth sends one worker on the Appendix A
+// heap a new package and class in every request. javac keeps every name and
+// package it has seen, so without the rebuilds this worker runs out of
+// memory after about 20,000 such requests and exits 4.
+func TestJavacWorkerBoundsCompilerGrowth(t *testing.T) {
+	const n = 30000
+	dir := t.TempDir()
+	requests := make([]map[string]any, 0, n)
+	for i := range n {
+		name := fmt.Sprintf("p%d/q%d/Main%d.java", i, i, i)
+		writeTree(t, dir, map[string]string{name: fmt.Sprintf(`package p%[1]d.q%[1]d;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class Main%[1]d {
+    static class Inner%[1]d {
+        int field%[1]d;
+    }
+
+    public static Map<String, Integer> run%[1]d(String[] args%[1]d) {
+        Map<String, Integer> counts%[1]d = new HashMap<>();
+        Inner%[1]d inner%[1]d = new Inner%[1]d();
+        for (String word%[1]d : args%[1]d) {
+            counts%[1]d.merge(word%[1]d, inner%[1]d.field%[1]d + 1, Integer::sum);
+        }
+        return counts%[1]d;
+    }
+}
+`, i)})
+		// Each request is its own workspace, as serve gives every lint.
+		ws := "/workspace/p" + strconv.Itoa(i)
+		requests = append(requests, map[string]any{"release": "11", "dir": ws, "files": []string{"/workspace/" + name}})
+	}
+	replies := runWorker(t, dir, requests)
+	for i := range n {
+		if r := replies[i+1]; r.Error != nil || !strings.Contains(string(r.Report), `"findings":[]`) {
+			t.Fatalf("request %d: %s %v", i+1, r.Report, r.Error)
 		}
 	}
 }
