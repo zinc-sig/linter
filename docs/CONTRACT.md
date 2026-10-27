@@ -889,15 +889,17 @@ reach the reply stream.
 
 **Rebuild.** A thread's compiler still grows with the requests it serves:
 the task pool keeps every name, package and package member it has seen,
-and the file manager keeps an entry per source file. After the warm-up the
-worker runs a collection and sets the old generation's collection usage
-threshold halfway between its use and its maximum. Each time a collection
-leaves the old generation above that threshold, every thread that has
-served at least 200 requests on its current compiler closes it (its file
-managers and `ct.sym` file systems) and builds a new one before its next
-request. A thread also does so after 20,000 requests. The rebuilt
-compiler is cold, which adds about 0.3 seconds of CPU to that one
-request; no request fails and the worker stays ready.
+and the file manager keeps an entry per source file. When every thread
+has checked the warm-up sample, the worker runs a full collection and sets
+the old generation's collection usage threshold halfway between its use
+and its maximum; without a complete warm-up it sets none. After a full
+collection leaves the old generation above that threshold, each thread
+builds a new compiler before its next request, or before its 200th
+request on the current one if it has served fewer, and closes the old
+one's file managers and `ct.sym` file systems. A thread also does so after
+20,000 requests on one compiler. Each rebuild writes a line to stderr. The
+new compiler is cold, which adds about 0.3 seconds of CPU to that one
+request; the worker stays ready, and a failure to close is only logged.
 
 **Exit codes.** `0` after stdin EOF; `2` for bad arguments; `3` for a
 request line it cannot parse; `4` on `OutOfMemoryError`, without a

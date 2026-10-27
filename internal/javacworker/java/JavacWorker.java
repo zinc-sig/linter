@@ -34,6 +34,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.lang.model.element.Element;
@@ -129,10 +130,13 @@ public final class JavacWorker {
             thread.setDaemon(true);
             return thread;
         });
-        if (warmup != null) {
-            warm(pool, threads, warmup);
+        // The heap threshold is set from the warm compilers' footprint, so
+        // without a complete warm-up only the request count rebuilds them.
+        if (warmup != null && warm(pool, threads, warmup)) {
+            watchHeap();
+        } else {
+            System.err.println("javac-worker: no complete warm-up; compilers are rebuilt every " + MAX_USES + " requests only");
         }
-        watchHeap();
 
         final BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         String line;
@@ -184,10 +188,12 @@ public final class JavacWorker {
     /**
      * Checks the warm-up sample once on every pool thread before the first
      * request is read, so no student pays for a cold compiler. The latch
-     * keeps each thread busy until all of them have taken a task.
+     * keeps each thread busy until all of them have taken a task. Returns
+     * whether every thread checked the sample.
      */
-    private static void warm(ExecutorService pool, int threads, String file) throws InterruptedException {
+    private static boolean warm(ExecutorService pool, int threads, String file) throws InterruptedException {
         final Path path = Path.of(file);
+        final AtomicBoolean ok = new AtomicBoolean(true);
         final CountDownLatch started = new CountDownLatch(threads);
         final CountDownLatch finished = new CountDownLatch(threads);
         for (int i = 0; i < threads; i++) {
@@ -197,6 +203,7 @@ public final class JavacWorker {
                     started.await();
                     check("11", path.getParent(), List.of(path.toString()), new StringBuilder());
                 } catch (Exception ex) {
+                    ok.set(false);
                     System.err.println("javac-worker: warm-up failed: " + causeChain(ex));
                 } finally {
                     finished.countDown();
@@ -204,15 +211,16 @@ public final class JavacWorker {
             });
         }
         finished.await();
+        return ok.get();
     }
 
     /**
      * Sets the collection threshold of the old generation halfway between
      * what it holds after warm-up and its maximum. javac's task pool keeps
-     * every name, package and class it has seen, so a compiler grows with
-     * the requests it serves; once the old generation is still above the
-     * threshold after a collection, each thread rebuilds its compiler on its
-     * next request.
+     * every name and package it has seen, so a compiler grows with the
+     * requests it serves; once a full collection leaves the old generation
+     * above the threshold, each thread rebuilds its compiler on its next
+     * request.
      */
     private static void watchHeap() {
         System.gc();
@@ -233,7 +241,7 @@ public final class JavacWorker {
         watchedPools = List.copyOf(pools);
     }
 
-    /** How many collections have so far left a watched pool above its threshold. */
+    /** How many full collections have so far left a watched pool above its threshold. */
     private static long heapCrossings() {
         long n = 0;
         for (MemoryPoolMXBean p : watchedPools) {
@@ -246,9 +254,11 @@ public final class JavacWorker {
     private static Compiler compiler() {
         Compiler c = COMPILER.get();
         if (c.uses >= MAX_USES || c.uses >= MIN_USES && heapCrossings() > c.crossings) {
-            c.close();
+            final Compiler old = c;
             c = new Compiler();
             COMPILER.set(c);
+            System.err.println("javac-worker: rebuilt a compiler after " + old.uses + " requests");
+            old.close();
         }
         c.uses++;
         return c;
@@ -419,8 +429,8 @@ public final class JavacWorker {
      * symbol tables between requests, and per release a file manager over
      * that release's API signatures (the ct.sym data --release reads), built
      * once instead of on every task. User sources only ever reach javac as
-     * compilation units, which the task pool forgets after each task;
-     * nothing is looked up on a source or class path. Every unit is parsed
+     * compilation units, whose classes the task pool removes from its class
+     * table after each task; nothing is looked up on a source or class path. Every unit is parsed
      * and entered, but only the classes of the reported files are
      * attributed and flow-analysed, so a sibling costs its declarations,
      * not its method bodies.
@@ -437,17 +447,16 @@ public final class JavacWorker {
         /** Requests this compiler has served. */
         int uses;
 
-        /** Closes the file managers and the ct.sym file systems they read. */
+        /** Closes the file managers and the ct.sym file systems they read; a failure only logs. */
         void close() {
-            try {
-                for (JavaFileManager fm : platforms.values()) {
-                    fm.close();
+            final List<java.io.Closeable> all = new ArrayList<>(platforms.values());
+            all.addAll(descriptions);
+            for (java.io.Closeable resource : all) {
+                try {
+                    resource.close();
+                } catch (Exception ex) {
+                    System.err.println("javac-worker: closing a compiler: " + causeChain(ex));
                 }
-                for (PlatformDescription d : descriptions) {
-                    d.close();
-                }
-            } catch (IOException ex) {
-                System.err.println("javac-worker: closing a compiler: " + causeChain(ex));
             }
         }
 
