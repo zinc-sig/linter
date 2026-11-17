@@ -46,9 +46,25 @@ jobs:
       - name: Run contract conformance tests
         run: go test -tags conformance ./...
 
+  # The SQL syntax checker is a Go module of its own, with its own Go
+  # release, so the root module's test job does not reach it.
+  test-sqlsyntax:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/sqlsyntax
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/sqlsyntax/go.mod
+          cache-dependency-path: tools/sqlsyntax/go.sum
+      - run: go vet ./...
+      - run: go test ./...
+
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, test-sqlsyntax]
     permissions:
       contents: write
       packages: write

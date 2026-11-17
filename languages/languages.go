@@ -15,6 +15,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -23,6 +24,7 @@ import (
 	"github.com/zinc-sig/linter/languages/internal/govet"
 	"github.com/zinc-sig/linter/languages/internal/javac"
 	"github.com/zinc-sig/linter/languages/internal/ruff"
+	"github.com/zinc-sig/linter/languages/internal/sqlsyntax"
 	"github.com/zinc-sig/linter/linter"
 )
 
@@ -67,6 +69,12 @@ type clangtidyOptions struct {
 type javacOptions struct {
 	// Release is the --release Java SE version, e.g. 11.
 	Release string `yaml:"release"`
+}
+
+// sqlsyntaxOptions is the with: block a tool: sqlsyntax stanza owns.
+type sqlsyntaxOptions struct {
+	// Dialect is the --dialect SQL dialect, e.g. postgresql.
+	Dialect string `yaml:"dialect"`
 }
 
 // decodeWith strictly decodes a stanza's with: block into the driver's
@@ -153,9 +161,21 @@ func build(key string, l language) (linter.Linter, error) {
 			return nil, fmt.Errorf("tool %q takes no with: options", l.Tool)
 		}
 		return govet.New(key, l.Name), nil
+	case sqlsyntax.ToolID:
+		var opts sqlsyntaxOptions
+		if err := decodeWith(l.With, &opts); err != nil {
+			return nil, err
+		}
+		if opts.Dialect == "" {
+			return nil, fmt.Errorf("tool sqlsyntax requires with.dialect (one of %s)", strings.Join(sqlsyntax.Dialects, ", "))
+		}
+		if !slices.Contains(sqlsyntax.Dialects, opts.Dialect) {
+			return nil, fmt.Errorf("with.dialect %q is not a sqlsyntax dialect (want one of %s)", opts.Dialect, strings.Join(sqlsyntax.Dialects, ", "))
+		}
+		return sqlsyntax.New(key, l.Name, opts.Dialect), nil
 	default:
-		return nil, fmt.Errorf("unknown tool %q (supported: %s, %s, %s, %s)",
-			l.Tool, ruff.ToolID, clangtidy.ToolID, javac.ToolID, govet.ToolID)
+		return nil, fmt.Errorf("unknown tool %q (supported: %s, %s, %s, %s, %s)",
+			l.Tool, ruff.ToolID, clangtidy.ToolID, javac.ToolID, govet.ToolID, sqlsyntax.ToolID)
 	}
 }
 
@@ -235,6 +255,7 @@ const (
 	ToolClangTidy = clangtidy.ToolID
 	ToolJavac     = javac.ToolID
 	ToolGoVet     = govet.ToolID
+	ToolSQLSyntax = sqlsyntax.ToolID
 )
 
 // Tool returns the driver id of a language key, or "" for an unknown key.

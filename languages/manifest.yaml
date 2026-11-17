@@ -18,13 +18,15 @@ version: 1
 # Key = stable language identifier (lowercase, [a-z0-9_+-]+), served
 # verbatim as the manifest map key. Per language:
 #   name  (required)  human-readable display name for UI/API surfaces
-#   tool  (required)  driver id: ruff | clang-tidy | javac | go vet
+#   tool  (required)  driver id: ruff | clang-tidy | javac | go vet |
+#                     sqlsyntax
 #   with  (per tool)  the driver's own options block, validated against
 #                     the driver's schema (ruff: target, the
 #                     --target-version dialect; clang-tidy: std, the
 #                     -std= language standard; javac: release, the
-#                     --release Java SE version); drivers without options
-#                     take no block at all
+#                     --release Java SE version; sqlsyntax: dialect, the
+#                     SQL dialect); drivers without options take no block
+#                     at all
 languages:
   # gnu17 is clang 19's own default for C (probed in the image via
   # __STDC_VERSION__ == 201710L with __STRICT_ANSI__ undefined), pinned so
@@ -61,6 +63,22 @@ languages:
     with:
       release: "11"
 
+  # The SQL languages are named after the database server whose dialect
+  # they check. sqlsyntax reports syntax errors only: it parses PostgreSQL
+  # with that server's own parser and MySQL with the TiDB parser, and
+  # leaves a MySQL statement alone where that parser is known to differ
+  # from the server (stored programs among them).
+  mysql:
+    name: MySQL
+    tool: sqlsyntax
+    with:
+      dialect: mysql
+  postgresql:
+    name: PostgreSQL
+    tool: sqlsyntax
+    with:
+      dialect: postgresql
+
   # Every python<NN> line shares the image's single pinned ruff binary and
   # differs only in the dialect ruff checks against — adding e.g. python314
   # is a stanza whose with: block sets target py314, no interpreter or
@@ -78,9 +96,10 @@ languages:
 
 # Toolchain install pins, consumed by the Dockerfile build via
 # cmd/toolversions — bump a pin by editing it here. clang-tidy has no pin:
-# Debian 13's repositories determine its release (currently LLVM 19), and
+# Debian 13's repositories determine its release (currently LLVM 19),
 # javac none: it is the compiler of the image's eclipse-temurin:21-jdk
-# stage.
+# stage, and sqlsyntax none: it is built from tools/sqlsyntax, whose
+# go.mod pins its parsers.
 tools:
   # One native ruff binary behind every python<NN> language, installed by
   # a pinned uv.
