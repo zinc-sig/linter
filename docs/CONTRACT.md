@@ -84,7 +84,7 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
 - `tool` (string, required): freeform tool name + version, for display and
   debugging. Consumers must not key behavior on it — use `tool_id`.
 - `tool_id` (string, optional, additive in v1): stable tool identifier
-  (e.g. `ruff`, `javac`, `clang-tidy`, `go vet`) that consumers may
+  (e.g. `ruff`, `javac`, `clang-tidy`, `go vet`, `sqlsyntax`) that consumers may
   key icons/filters/suppressions on. When absent, core falls back to a
   prefix match of `tool` against known ids.
 - `findings` (array, required, may be empty):
@@ -100,7 +100,8 @@ Every manifest `command` MUST write a single JSON document to **stdout**:
     implementation (e.g. ruff: syntax errors and undefined names
     (`F821`-`F823`)→`error`, other pyflakes `F` and pycodestyle
     `W`→`warning`, pycodestyle `E`→`convention`; javac errors→`error`,
-    warnings→`warning`, notes dropped).
+    warnings→`warning`, notes dropped; sqlsyntax reports syntax errors
+    only, all `error`).
   - `rule` (string, optional): tool-native rule/check id (e.g. `F401`,
     `compiler.err.cant.resolve.location`,
     `clang-analyzer-core.NullDereference`).
@@ -599,7 +600,7 @@ injected either.
 
 - The request context is cancelled when the client disconnects or the
   deadline passes.
-- One-shot tools (ruff, clang-tidy, `go vet`) run in their own process
+- One-shot tools (ruff, clang-tidy, `go vet`, sqlsyntax) run in their own process
   group; on cancellation the whole group gets SIGKILL, and the worker slot
   is freed once the tool has exited.
 - A Java request in flight is abandoned when its client disconnects: its

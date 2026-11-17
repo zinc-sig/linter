@@ -17,6 +17,19 @@ COPY cmd/ cmd/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cobe-lint ./cmd/cobe-lint \
     && go run ./cmd/toolversions > /out/tool-versions.sh
 
+# --- sqlsyntax stage: the SQL syntax checker (tools/sqlsyntax) ---------------
+# A module and a stage of its own: it links PostgreSQL's parser, which is C
+# and needs cgo, and its parsers need a newer Go release than the CLI. The
+# binary is linked statically, so the runtime stage adds no library for it.
+FROM golang:1.27 AS sqlsyntax
+
+WORKDIR /src
+COPY tools/sqlsyntax/go.mod tools/sqlsyntax/go.sum ./
+RUN go mod download
+COPY tools/sqlsyntax/ ./
+RUN CGO_ENABLED=1 go build -trimpath -tags netgo,osusergo \
+    -ldflags='-s -w -linkmode external -extldflags "-static"' -o /out/sqlsyntax .
+
 # --- jre stage: minimal jlink'ed Java runtime holding the compiler ----------
 # eclipse-temurin:21-jdk: a pinned, multi-arch (amd64+arm64) JDK shipping
 # javac/jlink; only the worker jar and the jlink'ed runtime below are
@@ -85,7 +98,7 @@ RUN . /opt/tool-versions.sh \
 FROM debian:13-slim
 
 LABEL org.opencontainers.image.source="https://github.com/zinc-sig/linter" \
-      org.opencontainers.image.description="Multi-language linter image (ruff, javac, clang-tidy, go vet) for COBE sandbox lint runs"
+      org.opencontainers.image.description="Multi-language linter image (ruff, javac, clang-tidy, go vet, sqlsyntax) for COBE sandbox lint runs"
 
 # Fail piped RUNs (curl | tar) on the producer side too, not just the consumer.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -120,6 +133,10 @@ COPY internal/javacworker/java/Warmup.java /opt/javac-warmup/Warmup.java
 # venv it was installed into stays behind in the ruff stage) — at the
 # stable path languages/internal/ruff references.
 COPY --from=ruff /opt/uv-tools/ruff/bin/ruff /usr/local/bin/ruff
+
+# The SQL syntax checker behind the mysql and postgresql languages, at the
+# stable path languages/internal/sqlsyntax references.
+COPY --from=sqlsyntax /out/sqlsyntax /usr/local/bin/sqlsyntax
 
 ARG TARGETARCH
 # `go vet` rebuilds stdlib export data from source, so src/ and pkg/ must

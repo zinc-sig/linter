@@ -134,7 +134,33 @@ var fixtures = map[string]map[string]fixture{
 		"clean": {"solution.go", goClean},
 		"dirty": {"solution.go", goDirty},
 	},
+	"mysql": {
+		"clean": {"answer.sql", mysqlClean},
+		"dirty": {"answer.sql", sqlDirty},
+	},
+	"postgresql": {
+		"clean": {"answer.sql", postgresqlClean},
+		"dirty": {"answer.sql", sqlDirty},
+	},
 }
+
+// Each clean sample uses syntax of its own dialect that the other rejects.
+const mysqlClean = "select `code`, count(*) as n\n" +
+	"from enrollment e join course c on c.id = e.course_id\n" +
+	"group by `code` with rollup\n" +
+	"limit 0, 5;\n"
+
+const postgresqlClean = `select distinct on (c.code) c.code, e.grade::int
+from enrollment e join course c on c.id = e.course_id
+where c.code ilike 'comp%'
+order by c.code, e.grade desc nulls last;
+`
+
+// FROM misspelled -> one syntax error in either dialect
+const sqlDirty = `select c.code, count(*) as n
+form enrollment e join course c on c.id = e.course_id
+group by c.code;
+`
 
 const pythonClean = `def main():
     return 0

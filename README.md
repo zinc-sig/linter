@@ -51,6 +51,7 @@ printf 'GET /healthz/ready HTTP/1.1\r\nHost: linter\r\nConnection: close\r\n\r\n
 | javac (java) | the compiler of the `eclipse-temurin:21-jdk` build stage, in a jlink'ed minimal Java 21 runtime | `/opt/java/bin/java -jar /opt/javac-worker.jar --once --release <N> <files>` |
 | Clang-Tidy (c, cpp11, cpp14) | Debian 13 (trixie) repositories (LLVM 19) | `clang-tidy <files> -- -std=<pinned standard>` |
 | Go | 1.24.0 | `go vet <files>` |
+| sqlsyntax (mysql, postgresql) | built from [`tools/sqlsyntax`](tools/sqlsyntax), whose `go.mod` pins its parsers: [pg_query_go](https://github.com/pganalyze/pg_query_go) (the PostgreSQL 17 parser) and the [TiDB parser](https://github.com/pingcap/tidb/tree/master/pkg/parser) | `/usr/local/bin/sqlsyntax --dialect <dialect> <files>` |
 
 Each pin lives in the `tools:` section of
 [`languages/manifest.yaml`](languages/manifest.yaml) — a one-line diff to
@@ -74,6 +75,8 @@ Every value below is a field of the language's stanza in
 | cpp11 | `-std=gnu++11` | `with.std: gnu++11` (GNU dialect, matching the gnu17 precedent) |
 | cpp14 | `-std=gnu++14` | `with.std: gnu++14` (GNU dialect, matching the gnu17 precedent) |
 | go | Go 1.24 | the pinned Go toolchain's typechecker |
+| mysql | MySQL 8 syntax | `with.dialect: mysql` (the TiDB parser) |
+| postgresql | PostgreSQL 17 syntax | `with.dialect: postgresql` (PostgreSQL's own parser) |
 
 Python versions stay decoupled from the base image, and more simply than
 before: no interpreter ships at all. One pinned ruff binary lints every
@@ -85,10 +88,22 @@ stanza against the API signatures of its `with.release`, so adding e.g.
 java17 is a stanza with `release: "17"`; JDK 21's javac covers releases 8
 to 21. Core's language registry decides which id a question uses.
 
+The SQL languages report syntax errors only. No database is behind the
+check, so a misspelled table or column name is not a finding. PostgreSQL
+is parsed by that server's own parser, so the verdict is the server's.
+MySQL has no such library; the TiDB parser stands in for it, and a
+statement is left unchecked where that parser is known to differ from
+the server: stored programs and what follows one written without a
+`DELIMITER` command, a few statement kinds, `SELECT ... INTO @variable`
+and `JSON_TABLE`. `tools/sqlsyntax/testdata` holds statements with each
+server's recorded verdict; the checker must agree with them.
+
 ## Key paths
 
 - `/usr/local/bin/cobe-lint` — the unified CLI (the only path core hardcodes)
 - `/usr/local/bin/ruff` — the shared ruff binary behind the python languages
+- `/usr/local/bin/sqlsyntax` — the SQL syntax checker behind the mysql and
+  postgresql languages (source in `tools/sqlsyntax`, a Go module of its own)
 - `/opt/java` — jlink'ed minimal Java runtime holding javac and the API
   signatures of every `--release` version
 - `/opt/javac-worker.jar`, `/opt/javac-warmup/Warmup.java` — the javac
@@ -144,6 +159,7 @@ re-published.
 
 ```bash
 go vet ./... && go test ./...     # unit tests (parsers, CLI, manifest, serve, dial-stdio, worker supervisor)
+(cd tools/sqlsyntax && go vet ./... && go test ./...)   # the SQL syntax checker, a module of its own (needs a C compiler)
 docker build -t cobe-linter:dev .
 go test -tags conformance ./...   # image conformance (IMAGE=<tag> to override)
 # Java throughput through dial-stdio against a core-shaped container
